@@ -39,6 +39,12 @@ final class LizardController {
 
     private(set) var state: LizardState = .stopped
 
+    private let habitat: any HabitatPresenting
+
+    init(habitat: any HabitatPresenting = HabitatController()) {
+        self.habitat = habitat
+    }
+
     var canStart: Bool { state != .running }
     var canPause: Bool { state == .running }
     var canStop:  Bool { state != .stopped }
@@ -49,22 +55,25 @@ final class LizardController {
     /// Start the lizard, or resume it if paused.
     func start() {
         guard canStart else { return }
-        // Phase 1: create the habitat windows (if not already open) and
-        // start or resume the animation loop.
+        if state == .paused {
+            habitat.setPaused(false)
+        } else {
+            habitat.show()
+        }
         state = .running
     }
 
     /// Freeze the lizard where it is; it stays visible.
     func pause() {
         guard canPause else { return }
-        // Phase 1: pause the animation loop.
+        habitat.setPaused(true)
         state = .paused
     }
 
     /// Remove the lizard from the screen.
     func stop() {
         guard canStop else { return }
-        // Phase 1: close the habitat windows and free rendering resources.
+        habitat.hide()
         state = .stopped
     }
 }
