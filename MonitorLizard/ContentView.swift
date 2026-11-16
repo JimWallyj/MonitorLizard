@@ -2,13 +2,15 @@
 //  ContentView.swift
 //  MonitorLizard
 //
-//  The small control window: Start / Pause / Stop.
+//  The small control window: Start / Pause / Stop, plus (Phase 1 only) a
+//  test switch for the renderer.
 //
 
 import SwiftUI
 
 struct ContentView: View {
     @Environment(LizardController.self) private var controller
+    @AppStorage(RendererKind.storageKey) private var rendererRaw = RendererKind.canvas2D.rawValue
 
     var body: some View {
         VStack(spacing: 16) {
@@ -36,9 +38,18 @@ struct ContentView: View {
                     .disabled(!controller.canStop)
             }
             .controlSize(.large)
+
+            Divider()
+
+            Picker("Renderer (test)", selection: $rendererRaw) {
+                ForEach(RendererKind.allCases) { kind in
+                    Text(kind.displayName).tag(kind.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
         }
         .padding(24)
-        .frame(width: 320)
+        .frame(width: 340)
     }
 }
 

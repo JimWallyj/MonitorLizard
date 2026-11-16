@@ -40,7 +40,7 @@ nonisolated enum PlaceholderLizardRenderer {
     // MARK: - Shape
 
     /// Half the body's width at each spine point: head, neck, body bulge, tapering tail.
-    private static func halfWidth(at index: Int, of count: Int) -> CGFloat {
+    static func halfWidth(at index: Int, of count: Int) -> CGFloat {
         let t = CGFloat(index) / CGFloat(max(count - 1, 1))   // 0 = head, 1 = tail tip
         switch t {
         case ..<0.06: return 5.5
@@ -151,7 +151,7 @@ nonisolated enum PlaceholderLizardRenderer {
     // MARK: - Vector helpers
 
     /// Unit vector pointing toward the head at spine point `i`.
-    private static func forward(at i: Int, in spine: [CGPoint]) -> CGVector {
+    static func forward(at i: Int, in spine: [CGPoint]) -> CGVector {
         let a = spine[max(i - 1, 0)]
         let b = spine[min(i + 1, spine.count - 1)]
         let dx = a.x - b.x, dy = a.y - b.y
@@ -159,7 +159,7 @@ nonisolated enum PlaceholderLizardRenderer {
         return length > 0 ? CGVector(dx: dx / length, dy: dy / length) : CGVector(dx: 1, dy: 0)
     }
 
-    private static func offset(_ p: CGPoint, by v: CGVector, _ k: CGFloat) -> CGPoint {
+    static func offset(_ p: CGPoint, by v: CGVector, _ k: CGFloat) -> CGPoint {
         CGPoint(x: p.x + v.dx * k, y: p.y + v.dy * k)
     }
 }
