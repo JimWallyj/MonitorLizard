@@ -10,6 +10,7 @@ enum RendererKind: String, CaseIterable, Identifiable {
     case canvas2D
     case realityView
     case arView
+    case manual3D
 
     static let storageKey = "rendererKind"
 
@@ -20,6 +21,7 @@ enum RendererKind: String, CaseIterable, Identifiable {
         case .canvas2D:    "2D (Canvas)"
         case .realityView: "3D (RealityView)"
         case .arView:      "3D (ARView)"
+        case .manual3D:    "3D (Manual, capped) – recommended"
         }
     }
 }

@@ -7,8 +7,6 @@
 //
 
 import AppKit
-import Observation
-import SwiftUI
 
 /// What LizardController needs from the habitat. A protocol so tests can use
 /// a stand-in that doesn't open real windows.
@@ -18,39 +16,41 @@ protocol HabitatPresenting: AnyObject {
     func hide()
 }
 
-/// Shared state the habitat's SwiftUI view watches.
-@Observable
-final class HabitatState {
-    var isPaused = false
-}
-
 final class HabitatController: HabitatPresenting {
 
-    private let state = HabitatState()
     private var window: HabitatWindow?
-    private var screenObserver: (any NSObjectProtocol)?
+    private var animator: LizardAnimator?
+    private var observers: [any NSObjectProtocol] = []
 
     func show() {
-        state.isPaused = false
-        if window == nil {
-            window = makeWindow()
+        if window == nil, let screen = primaryScreen {
+            let content = HabitatView(frame: CGRect(origin: .zero, size: screen.frame.size))
+            content.autoresizingMask = [.width, .height]
+            let window = HabitatWindow.make(for: screen, content: content)
+            self.window = window
+
+            let animator = LizardAnimator(container: content, kind: currentRendererKind)
+            self.animator = animator
+            window.orderFrontRegardless()
+            animator.start()
+            startObserving()
         }
+        animator?.isPaused = false
         window?.orderFrontRegardless()
-        observeScreenChanges()
     }
 
     func setPaused(_ paused: Bool) {
-        state.isPaused = paused
+        animator?.isPaused = paused
     }
 
     func hide() {
+        animator?.stop()
+        animator = nil
         window?.orderOut(nil)
         window?.close()
         window = nil
-        if let screenObserver {
-            NotificationCenter.default.removeObserver(screenObserver)
-        }
-        screenObserver = nil
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers.removeAll()
     }
 
     // MARK: - Private
@@ -58,25 +58,28 @@ final class HabitatController: HabitatPresenting {
     /// The display with the menu bar.
     private var primaryScreen: NSScreen? { NSScreen.screens.first }
 
-    private func makeWindow() -> HabitatWindow? {
-        guard let screen = primaryScreen else { return nil }
-        let host = NSHostingView(rootView: HabitatView(state: state))
-        host.sizingOptions = []        // the window sets the size, not the SwiftUI content
-        return HabitatWindow.make(for: screen, content: host)
+    private var currentRendererKind: RendererKind {
+        RendererKind(rawValue: UserDefaults.standard.string(forKey: RendererKind.storageKey) ?? "") ?? .canvas2D
     }
 
-    /// Keep the habitat covering the screen when displays or resolution change.
-    private func observeScreenChanges() {
-        guard screenObserver == nil else { return }
-        screenObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didChangeScreenParametersNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
+    private func startObserving() {
+        guard observers.isEmpty else { return }
+        let center = NotificationCenter.default
+
+        // Keep covering the screen when displays or resolution change.
+        observers.append(center.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+                                            object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fitToScreen() }
+        })
+
+        // Phase 1 test switch: follow the renderer picker in the control window.
+        observers.append(center.addObserver(forName: UserDefaults.didChangeNotification,
+                                            object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.fitToScreen()
+                guard let self else { return }
+                self.animator?.setKind(self.currentRendererKind)
             }
-        }
+        })
     }
 
     private func fitToScreen() {

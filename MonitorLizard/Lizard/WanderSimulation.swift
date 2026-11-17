@@ -33,8 +33,8 @@ nonisolated struct SeededRandom: RandomNumberGenerator {
 nonisolated struct WanderSimulation {
 
     struct Config {
-        var walkSpeed: CGFloat = 70              // points per second
-        var maxTurnRate: CGFloat = 2.2           // radians per second
+        var walkSpeed: CGFloat = 35              // points per second (a slow, deliberate walk)
+        var maxTurnRate: CGFloat = 1.4           // radians per second
         var segmentCount = 16                    // spine points, head first
         var segmentSpacing: CGFloat = 8          // points between spine points
         var margin: CGFloat = 60                 // stay this far from the screen edges

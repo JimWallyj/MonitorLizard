@@ -2,72 +2,115 @@
 //  Lizard3DViews.swift
 //  MonitorLizard
 //
-//  Two ways of showing the 3D stand-in, to find out which one can draw with a
-//  see-through background inside the habitat window:
-//    • RealityView: the modern SwiftUI view.
-//    • ARView: the older AppKit view, which lets us set a clear background colour.
+//  The three ways of drawing the stand-in lizard (Phase 1 test switch).
+//  Each provides one small square view that LizardAnimator moves around the
+//  habitat, and poses the lizard inside it each frame.
 //
 
 import AppKit
+import Observation
 import RealityKit
 import SwiftUI
 
-/// Picks the 3D view for the chosen renderer.
-struct Lizard3DContainer: View {
-    let kind: RendererKind
-    let pose: LizardPose
+protocol LizardRendering: AnyObject {
+    var view: NSView { get }
+    func apply(_ pose: LizardPose, simulation: WanderSimulation)
+}
+
+private func squareFrame() -> CGRect {
+    CGRect(x: 0, y: 0, width: Lizard3DModel.viewSize, height: Lizard3DModel.viewSize)
+}
+
+// MARK: - 2D (SwiftUI Canvas, small view only)
+
+@Observable
+final class Lizard2DFrame {
+    var simulation: WanderSimulation?
+    var origin: CGPoint = .zero
+}
+
+struct Lizard2DView: View {
+    let frame: Lizard2DFrame
 
     var body: some View {
-        switch kind {
-        case .arView:
-            LizardARView(pose: pose)
-        default:
-            LizardRealityView(pose: pose)
+        // Read the values here so SwiftUI redraws when they change.
+        let simulation = frame.simulation
+        let origin = frame.origin
+        Canvas { context, _ in
+            guard let simulation else { return }
+            context.translateBy(x: -origin.x, y: -origin.y)
+            PlaceholderLizardRenderer.draw(simulation, in: &context)
         }
     }
 }
 
-// MARK: - RealityView
+final class Lizard2DRenderer: LizardRendering {
+    private let frame = Lizard2DFrame()
+    let view: NSView
+
+    init() {
+        let host = NSHostingView(rootView: Lizard2DView(frame: frame))
+        host.sizingOptions = []
+        host.frame = squareFrame()
+        view = host
+    }
+
+    func apply(_ pose: LizardPose, simulation: WanderSimulation) {
+        let center = simulation.spine[simulation.spine.count / 2]
+        let half = Lizard3DModel.viewSize / 2
+        frame.origin = CGPoint(x: center.x - half, y: center.y - half)
+        frame.simulation = simulation
+    }
+}
+
+// MARK: - 3D with RealityView
 
 struct LizardRealityView: View {
-    let pose: LizardPose
-    @State private var model = Lizard3DModel()
+    let root: Entity
 
     var body: some View {
         RealityView { content in
-            content.add(model.root)
-        } update: { _ in
-            model.apply(pose)
+            content.add(root)
         }
-        .background(Color.clear)
     }
 }
 
-// MARK: - ARView
+final class LizardRealityRenderer: LizardRendering {
+    private let model = Lizard3DModel()
+    let view: NSView
 
-struct LizardARView: NSViewRepresentable {
-    let pose: LizardPose
-
-    final class Coordinator {
-        let model = Lizard3DModel()
+    init() {
+        let host = NSHostingView(rootView: LizardRealityView(root: model.root))
+        host.sizingOptions = []
+        host.frame = squareFrame()
+        view = host
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func apply(_ pose: LizardPose, simulation: WanderSimulation) {
+        model.apply(pose)       // entities update directly; SwiftUI isn't involved
+    }
+}
 
-    func makeNSView(context: Context) -> ARView {
-        let view = ARView(frame: .zero)
-        view.environment.background = .color(.clear)
-        view.wantsLayer = true
-        view.layer?.isOpaque = false
-        view.layer?.backgroundColor = NSColor.clear.cgColor
+// MARK: - 3D with ARView
+
+final class LizardARRenderer: LizardRendering {
+    private let model = Lizard3DModel()
+    let view: NSView
+
+    init() {
+        let arView = ARView(frame: squareFrame())
+        arView.environment.background = .color(.clear)
+        arView.wantsLayer = true
+        arView.layer?.isOpaque = false
+        arView.layer?.backgroundColor = NSColor.clear.cgColor
 
         let anchor = AnchorEntity(world: .zero)
-        anchor.addChild(context.coordinator.model.root)
-        view.scene.addAnchor(anchor)
-        return view
+        anchor.addChild(model.root)
+        arView.scene.addAnchor(anchor)
+        view = arView
     }
 
-    func updateNSView(_ view: ARView, context: Context) {
-        context.coordinator.model.apply(pose)
+    func apply(_ pose: LizardPose, simulation: WanderSimulation) {
+        model.apply(pose)
     }
 }

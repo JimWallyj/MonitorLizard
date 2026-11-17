@@ -19,6 +19,8 @@ final class Lizard3DModel {
     static let metersPerPoint: Float = 0.01
 
     let root = Entity()
+    /// The camera looking down at the lizard (used by the manual renderer).
+    let camera = PerspectiveCamera()
 
     private var joints: [ModelEntity] = []     // spheres at spine points
     private var links: [ModelEntity] = []      // cylinders between spine points
@@ -59,7 +61,6 @@ final class Lizard3DModel {
         let fieldOfView: Float = 20
         let visibleHeight = Float(Self.viewSize) * Self.metersPerPoint
         let distance = (visibleHeight / 2) / tan(fieldOfView / 2 * .pi / 180)
-        let camera = PerspectiveCamera()
         camera.camera.fieldOfViewInDegrees = fieldOfView
         camera.camera.near = 0.1
         camera.camera.far = distance * 2
@@ -68,9 +69,16 @@ final class Lizard3DModel {
 
         // Light from the top left, matching the 2D drop shadow.
         let light = DirectionalLight()
-        light.light.intensity = 2_500
+        light.light.intensity = 4_500
         light.look(at: .zero, from: [-3, 4, 6], relativeTo: nil)
         root.addChild(light)
+
+        // Soft fill light from the camera's side, so the shaded side isn't black
+        // when there's no environment lighting (manual renderer).
+        let fill = DirectionalLight()
+        fill.light.intensity = 2_200
+        fill.look(at: .zero, from: [0, 0, 10], relativeTo: nil)
+        root.addChild(fill)
     }
 
     func apply(_ pose: LizardPose) {
@@ -97,9 +105,12 @@ final class Lizard3DModel {
 
         // Legs.
         for (i, leg) in pose.legs.enumerated() where i < feet.count {
-            place(legBones[i * 2], from: world(leg.base, z: 2), to: world(leg.knee, z: 1.2), radius: 1.3 * k)
-            place(legBones[i * 2 + 1], from: world(leg.knee, z: 1.2), to: world(leg.foot, z: 0.6), radius: 1.1 * k)
-            feet[i].position = world(leg.foot, z: 0.6)
+            // Elbows and knees sit up above the body's side, as in a sprawling lizard.
+            let kneeHeight = 3.2 + leg.lift * 0.5
+            let footHeight = 0.6 + leg.lift
+            place(legBones[i * 2], from: world(leg.base, z: 2.5), to: world(leg.knee, z: kneeHeight), radius: 1.3 * k)
+            place(legBones[i * 2 + 1], from: world(leg.knee, z: kneeHeight), to: world(leg.foot, z: footHeight), radius: 1.1 * k)
+            feet[i].position = world(leg.foot, z: footHeight)
             feet[i].scale = SIMD3(repeating: 1.8 * k)
         }
 
