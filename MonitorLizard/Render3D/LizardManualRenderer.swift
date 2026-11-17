@@ -16,16 +16,30 @@ import Metal
 import QuartzCore
 import RealityKit
 
+/// A 3D lizard scene the manual renderer can draw: the stand-in or the real model.
+protocol LizardScene3D: AnyObject {
+    var root: Entity { get }
+    var camera: PerspectiveCamera { get }
+    var gaitConfig: LizardGait.Config? { get }
+    func apply(_ pose: LizardPose)
+}
+
+extension Lizard3DModel: LizardScene3D {
+    var gaitConfig: LizardGait.Config? { nil }
+}
+
 final class LizardManualRenderer: LizardRendering {
 
-    private let model = Lizard3DModel()
+    private let model: any LizardScene3D
+    var gaitConfig: LizardGait.Config? { model.gaitConfig }
     private let renderer: RealityRenderer?
     private let metalLayer = CAMetalLayer()
     private var lastRenderTime = CACurrentMediaTime()
     private var frameInFlight = false
     let view: NSView
 
-    init() {
+    init(scene: any LizardScene3D = Lizard3DModel()) {
+        model = scene
         metalLayer.device = MTLCreateSystemDefaultDevice()
         metalLayer.pixelFormat = .bgra8Unorm_srgb
         metalLayer.framebufferOnly = false

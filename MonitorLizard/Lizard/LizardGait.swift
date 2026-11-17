@@ -18,7 +18,13 @@ import Foundation
 
 nonisolated struct LizardGait {
 
-    struct Config {
+    struct Config: Equatable {
+        // Real-model overrides (set from the rigged model's measurements; nil = stand-in values).
+        var frontSpineIndex: Int? = nil       // spine point the front legs hang from
+        var backSpineIndex: Int? = nil        // spine point the back legs hang from
+        var frontLateral: CGFloat? = nil      // front feet rest this far from the centreline
+        var backLateral: CGFloat? = nil       // back feet rest this far from the centreline
+
         var upperLength: CGFloat = 8          // shoulder/hip to elbow/knee, points
         var lowerLength: CGFloat = 7.5        // elbow/knee to foot
         var footSpread: CGFloat = 11          // feet rest this far outside the body edge
@@ -29,7 +35,8 @@ nonisolated struct LizardGait {
         var stepLead: CGFloat = 0.55          // land this fraction of stepTrigger ahead of rest
         var stepDuration: Double = 0.3        // seconds per step
         var liftHeight: CGFloat = 3           // how high a foot lifts mid-step
-        var tailWaveAmplitude: CGFloat = 3.5  // sideways tail swing at the tip while walking
+        var tailWaveAmplitude: CGFloat = 5.5  // sideways tail swing at the tip while walking
+        var overstretchFactor: CGFloat = 2.2  // step regardless of the other pair beyond this × stepTrigger
     }
 
     struct Foot {
@@ -64,8 +71,8 @@ nonisolated struct LizardGait {
     init(simulation sim: WanderSimulation, config: Config = Config()) {
         self.config = config
         let n = sim.spine.count
-        let shoulder = Int((CGFloat(n - 1) * 0.14).rounded())
-        let hip = Int((CGFloat(n - 1) * 0.40).rounded())
+        let shoulder = min(max(config.frontSpineIndex ?? Int((CGFloat(n - 1) * 0.14).rounded()), 1), n - 2)
+        let hip = min(max(config.backSpineIndex ?? Int((CGFloat(n - 1) * 0.40).rounded()), 1), n - 2)
         let layout = [
             LegLayout(spineIndex: shoulder, side: 1, isFront: true),
             LegLayout(spineIndex: shoulder, side: -1, isFront: true),
@@ -107,7 +114,7 @@ nonisolated struct LizardGait {
         for i in feet.indices.sorted(by: { lag[$0] > lag[$1] }) where !feet[i].isStepping {
             guard lag[i] > trigger else { continue }
             let otherPairInAir = feet.indices.contains { Self.pair(of: $0) != Self.pair(of: i) && feet[$0].isStepping }
-            let overstretched = lag[i] > config.stepTrigger * 2.2      // e.g. after a sharp turn
+            let overstretched = lag[i] > config.stepTrigger * config.overstretchFactor      // e.g. after a sharp turn
             guard !otherPairInAir || overstretched else { continue }
             startStep(i)
             // Bring the diagonal partner along if it's due soon, to keep the trot rhythm.
@@ -149,8 +156,9 @@ nonisolated struct LizardGait {
     static func restSpot(for leg: LegLayout, spine: [CGPoint], config: Config) -> CGPoint {
         let f = PlaceholderLizardRenderer.forward(at: leg.spineIndex, in: spine)
         let edge = PlaceholderLizardRenderer.halfWidth(at: leg.spineIndex, of: spine.count)
+        let lateral = (leg.isFront ? config.frontLateral : config.backLateral) ?? (edge + config.footSpread)
         let out = PlaceholderLizardRenderer.offset(spine[leg.spineIndex], by: CGVector(dx: -f.dy, dy: f.dx),
-                                                    leg.side * (edge + config.footSpread))
+                                                    leg.side * lateral)
         return PlaceholderLizardRenderer.offset(out, by: f, leg.isFront ? config.frontReach : config.backReach)
     }
 

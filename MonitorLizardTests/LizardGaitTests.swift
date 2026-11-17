@@ -73,4 +73,23 @@ struct LizardGaitTests {
         #expect(abs(WanderSimulation.distance(knee, foot) - 7.5) < 0.001)
         #expect(knee.y < 2)    // bent toward the requested side
     }
+
+    @Test func realModelOverridesPlaceTheFeet() {
+        let sim = WanderSimulation(start: CGPoint(x: 720, y: 450), heading: 0, bounds: bounds, seed: 1)
+        var config = LizardGait.Config()
+        config.frontSpineIndex = 4
+        config.backSpineIndex = 9
+        config.frontLateral = 14
+        config.backLateral = 12
+        config.frontReach = 0
+        config.backReach = 0
+        let gait = LizardGait(simulation: sim, config: config)
+        // Heading 0 (facing right): the spine is a horizontal line, so each foot sits
+        // straight above or below its spine point, at the requested distance.
+        #expect(gait.layout[0].spineIndex == 4)
+        #expect(gait.layout[2].spineIndex == 9)
+        #expect(abs(abs(gait.feet[0].position.y - sim.spine[4].y) - 14) < 0.001)
+        #expect(abs(abs(gait.feet[2].position.y - sim.spine[9].y) - 12) < 0.001)
+        #expect(abs(gait.feet[0].position.x - sim.spine[4].x) < 0.001)
+    }
 }

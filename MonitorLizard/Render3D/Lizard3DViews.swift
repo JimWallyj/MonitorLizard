@@ -14,7 +14,13 @@ import SwiftUI
 
 protocol LizardRendering: AnyObject {
     var view: NSView { get }
+    /// Leg geometry for the gait, when the renderer's lizard differs from the stand-in.
+    var gaitConfig: LizardGait.Config? { get }
     func apply(_ pose: LizardPose, simulation: WanderSimulation)
+}
+
+extension LizardRendering {
+    var gaitConfig: LizardGait.Config? { nil }
 }
 
 private func squareFrame() -> CGRect {

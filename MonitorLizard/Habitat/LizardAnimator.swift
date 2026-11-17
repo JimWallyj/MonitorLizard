@@ -91,7 +91,10 @@ final class LizardAnimator: NSObject {
         lastTimestamp = now
         simulation = sim
 
-        var gait = self.gait ?? LizardGait(simulation: sim)
+        // The real model has its own leg positions; rebuild the gait when they change.
+        let wantedConfig = renderer.gaitConfig ?? LizardGait.Config()
+        var gait = (self.gait?.config == wantedConfig ? self.gait : nil)
+            ?? LizardGait(simulation: sim, config: wantedConfig)
         gait.update(with: sim, deltaTime: deltaTime)
         self.gait = gait
 
@@ -148,6 +151,7 @@ final class LizardAnimator: NSObject {
         case .realityView: LizardRealityRenderer()
         case .arView:      LizardARRenderer()
         case .manual3D:    LizardManualRenderer()
+        case .realModel:   LizardManualRenderer(scene: RealLizardModel())
         }
     }
 }
