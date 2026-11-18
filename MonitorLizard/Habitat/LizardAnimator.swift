@@ -26,6 +26,10 @@ final class LizardAnimator: NSObject {
     private var renderer: any LizardRendering
     private var simulation: WanderSimulation?
     private var gait: LizardGait?
+    private var headLook = HeadLook()
+    private var viewMode: LizardView = .top
+    private var forceLook = false
+    private var lastDrawnPointer: CGPoint?
     private var displayLink: CADisplayLink?
     private var lastTimestamp: CFTimeInterval?
     private var currentRate: Float = 0
@@ -76,6 +80,14 @@ final class LizardAnimator: NSObject {
         if let simulation { place(simulation, force: true) }
     }
 
+    /// Phase 1 test switches from the control window: camera view and "look at me".
+    func setTestOptions(view: LizardView, forceLook: Bool) {
+        guard view != viewMode || forceLook != self.forceLook else { return }
+        viewMode = view
+        self.forceLook = forceLook
+        if let simulation { place(simulation, force: true) }
+    }
+
     // MARK: - Frame loop
 
     @objc private func tick(_ link: CADisplayLink) {
@@ -97,6 +109,7 @@ final class LizardAnimator: NSObject {
             ?? LizardGait(simulation: sim, config: wantedConfig)
         gait.update(with: sim, deltaTime: deltaTime)
         self.gait = gait
+        headLook.update(isResting: !sim.isWalking, forceLook: forceLook, deltaTime: deltaTime)
 
         place(sim)
         setFrameRate(Self.preferredFrameRate(isWalking: sim.isWalking))
@@ -104,19 +117,42 @@ final class LizardAnimator: NSObject {
 
     private func place(_ sim: WanderSimulation, force: Bool = false) {
         let center = sim.spine[sim.spine.count / 2]
-        let pose = LizardPose(sim, gait: gait, relativeTo: center)
+        var pose = LizardPose(sim, gait: gait, relativeTo: center)
+        pose.view = viewMode
+        pose.lookAtViewer = headLook.amount
+        pose.glance = headLook.glance
+        let pointer = pointerLocation()
+        pose.pointer = pointer.map { CGPoint(x: $0.x - center.x, y: $0.y - center.y) }
+
+        // While looking at the pointer, redraw when the pointer moves.
+        let pointerMoved: Bool = {
+            guard headLook.amount > 0.01, let pointer else { return false }
+            guard let last = lastDrawnPointer else { return true }
+            return hypot(pointer.x - last.x, pointer.y - last.y) > 2
+        }()
 
         // While resting, skip frames where nothing changed: feet settled,
-        // tail still, tongue unchanged.
+        // tail still, head still, tongue unchanged.
         let tongueOut = pose.tongue != nil
-        let settled = gait?.isSettled ?? true
-        if !force, !sim.isWalking, settled, lastRestingTongueOut == tongueOut { return }
+        let settled = (gait?.isSettled ?? true) && headLook.isSettled
+        if !force, !sim.isWalking, settled, !pointerMoved, lastRestingTongueOut == tongueOut { return }
         lastRestingTongueOut = sim.isWalking ? nil : tongueOut
+        lastDrawnPointer = pointer
 
+        // Side view: stay on a level "ledge" line (Phase 3 will use real ledges);
+        // the wander's up/down movement becomes depth instead of floating.
         let half = Lizard3DModel.viewSize / 2
-        renderer.view.setFrameOrigin(CGPoint(x: center.x - half, y: center.y - half))
+        let viewY = viewMode == .side ? container.bounds.height * 0.75 : center.y
+        renderer.view.setFrameOrigin(CGPoint(x: center.x - half, y: viewY - half))
         renderer.apply(pose, simulation: sim)
         drawsSinceReport += 1
+    }
+
+    /// The mouse pointer in the habitat's coordinates (y down), or nil if unavailable.
+    private func pointerLocation() -> CGPoint? {
+        guard let window = container.window else { return nil }
+        let inWindow = window.convertPoint(fromScreen: NSEvent.mouseLocation)
+        return container.convert(inWindow, from: nil)
     }
 
     /// Prints the real tick and draw rates to Xcode's console every 5 seconds.

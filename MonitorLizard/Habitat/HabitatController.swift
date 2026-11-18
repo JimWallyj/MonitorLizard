@@ -32,6 +32,7 @@ final class HabitatController: HabitatPresenting {
             let animator = LizardAnimator(container: content, kind: currentRendererKind)
             self.animator = animator
             window.orderFrontRegardless()
+            animator.setTestOptions(view: currentView, forceLook: currentForceLook)
             animator.start()
             startObserving()
         }
@@ -62,6 +63,14 @@ final class HabitatController: HabitatPresenting {
         RendererKind(rawValue: UserDefaults.standard.string(forKey: RendererKind.storageKey) ?? "") ?? .canvas2D
     }
 
+    private var currentView: LizardView {
+        LizardView(rawValue: UserDefaults.standard.string(forKey: LizardView.storageKey) ?? "") ?? .top
+    }
+
+    private var currentForceLook: Bool {
+        UserDefaults.standard.bool(forKey: LizardView.forceLookKey)
+    }
+
     private func startObserving() {
         guard observers.isEmpty else { return }
         let center = NotificationCenter.default
@@ -78,6 +87,7 @@ final class HabitatController: HabitatPresenting {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.animator?.setKind(self.currentRendererKind)
+                self.animator?.setTestOptions(view: self.currentView, forceLook: self.currentForceLook)
             }
         })
     }

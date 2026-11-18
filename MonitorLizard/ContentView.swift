@@ -11,6 +11,8 @@ import SwiftUI
 struct ContentView: View {
     @Environment(LizardController.self) private var controller
     @AppStorage(RendererKind.storageKey) private var rendererRaw = RendererKind.canvas2D.rawValue
+    @AppStorage(LizardView.storageKey) private var viewRaw = LizardView.top.rawValue
+    @AppStorage(LizardView.forceLookKey) private var forceLook = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -47,6 +49,15 @@ struct ContentView: View {
                 }
             }
             .pickerStyle(.menu)
+
+            Picker("View (test)", selection: $viewRaw) {
+                ForEach(LizardView.allCases) { view in
+                    Text(view.displayName).tag(view.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Toggle("Look at me (test)", isOn: $forceLook)
         }
         .padding(24)
         .frame(width: 340)

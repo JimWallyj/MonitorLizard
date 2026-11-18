@@ -56,7 +56,7 @@ final class RealLizardModel: LizardScene3D {
     }
 
     func apply(_ pose: LizardPose) {
-        rig?.apply(pose, carrier: carrier)
+        rig?.apply(pose, carrier: carrier, cameraPosition: camera.position)
     }
 
     // MARK: - Loading
@@ -148,6 +148,9 @@ final class RealLizardRig {
     /// How far the body is lowered into a walking crouch (model units), so the
     /// legs bend and have room to stride. In the model's standing pose they're nearly straight.
     private let crouch: Float
+    /// Neck and head joints, and the snout tip in the head's own frame (for the head look).
+    private let neck1: Int, neck2: Int, head: Int
+    private let snoutTipInHead: SIMD3<Float>
 
     init(model: ModelEntity) throws {
         self.model = model
@@ -188,13 +191,16 @@ final class RealLizardRig {
         restGlobal = globals
         func pos(_ i: Int) -> SIMD3<Float> { let c = globals[i].columns.3; return [c.x, c.y, c.z] }
 
-        // Axes from the bones: forward = pelvis → head, left = right thigh → left thigh.
+        // Axes from the bones. "Up" comes from the four feet (they stand on the ground), not
+        // from the pelvis-to-head line, which slopes up because the head is held raised.
         let pelvis = try index("Pelvis")
         let head = try index("Head"), neck2 = try index("Neck2")
-        let thighL = try index("Thigh_L"), thighR = try index("Thigh_R")
+        let handL = try index("Hand_L"), handR = try index("Hand_R")
+        let footL = try index("Foot_L"), footR = try index("Foot_R")
+        let feetForward = (pos(handL) + pos(handR) - pos(footL) - pos(footR)) / 2
+        let feetLeft = (pos(handL) + pos(footL) - pos(handR) - pos(footR)) / 2
+        let up = simd_normalize(simd_cross(feetForward, feetLeft))
         let f0 = pos(head) - pos(pelvis)
-        let l0 = pos(thighL) - pos(thighR)
-        let up = simd_normalize(simd_cross(f0, l0))
         let forward = simd_normalize(f0 - up * simd_dot(f0, up))
         let left = simd_cross(up, forward)
         self.up = up; self.forward = forward; self.left = left
@@ -243,6 +249,11 @@ final class RealLizardRig {
         let tailEndArc = s + simd_length(flat(tailEnd - last))
         self.pelvis = pelvis
         self.pelvisArc = pelvisArc
+        self.head = head
+        self.neck2 = neck2
+        self.neck1 = try index("Neck1")
+        let tipInHead = globals[head].inverse * SIMD4<Float>(tip, 1)
+        snoutTipInHead = SIMD3(tipInHead.x, tipInHead.y, tipInHead.z)
         let ppu = Self.pathLength / tailEndArc
         pointsPerUnit = ppu
 
@@ -347,10 +358,24 @@ final class RealLizardRig {
 
     // MARK: - Posing
 
-    func apply(_ pose: LizardPose, carrier: Entity) {
-        // 1. Body path in scene points (y up): snout tip, then the body centres.
-        let headDirection = SIMD2<Float>(Float(cos(pose.headAngle)), Float(-sin(pose.headAngle)))
-        var path: [SIMD2<Float>] = pose.body.map { SIMD2(Float($0.center.x), Float(-$0.center.y)) }
+    func apply(_ pose: LizardPose, carrier: Entity, cameraPosition: SIMD3<Float>) {
+        // Views. The lizard is posed in a "body frame" (floor = XY plane, up = +Z), then the
+        // whole body frame is turned for the view: flipped for the belly view (on the glass),
+        // stood on its side for the side view. Flipping mirrors left and right, so for the
+        // belly view the path is mirrored first and the legs swap sides; it then walks the
+        // same way on screen.
+        let belly = pose.view == .belly
+        let ySign: Float = belly ? 1 : -1
+        let viewRotation: simd_float3x3
+        switch pose.view {
+        case .top:   viewRotation = matrix_identity_float3x3
+        case .belly: viewRotation = simd_float3x3(simd_quatf(angle: .pi, axis: [1, 0, 0]))
+        case .side:  viewRotation = simd_float3x3(simd_quatf(angle: -.pi / 2, axis: [1, 0, 0]))
+        }
+
+        // 1. Body path in body-frame points (y up): snout tip, then the body centres.
+        let headDirection = SIMD2<Float>(Float(cos(pose.headAngle)), ySign * Float(sin(pose.headAngle)))
+        var path: [SIMD2<Float>] = pose.body.map { SIMD2(Float($0.center.x), ySign * Float($0.center.y)) }
         guard path.count >= 2 else { return }
         path.insert(path[0] + headDirection * Self.snoutLead, at: 0)
         var cumulative: [Float] = [0]
@@ -380,9 +405,11 @@ final class RealLizardRig {
         let offset = carrierRotation * (pelvisModel * scale)
         let carrierPosition = SIMD3<Float>(pelvisScene.x - offset.x, pelvisScene.y - offset.y,
                                            -scale * (floorUp + crouch))
-        carrier.transform = Transform(scale: SIMD3(repeating: scale),
-                                      rotation: simd_quatf(carrierRotation),
-                                      translation: carrierPosition)
+        let bodyMatrix = Transform(scale: SIMD3(repeating: scale),
+                                   rotation: simd_quatf(carrierRotation),
+                                   translation: carrierPosition).matrix
+        let viewMatrix = matrix(rotation: viewRotation, translation: .zero)
+        carrier.transform = Transform(matrix: viewMatrix * bodyMatrix)
 
         // 3. Turn each body and tail bone to follow the path.
         var globals = restGlobal
@@ -402,11 +429,34 @@ final class RealLizardRig {
             globals[i] = g
         }
 
+        // 3b. Head look: turn the neck and head toward the viewer (the camera), plus any glance.
+        //     Top and belly views look toward the mouse pointer (reads clearly from above);
+        //     the side view looks straight out at the viewer.
+        if pose.lookAtViewer > 0.001 || abs(pose.glance) > 0.001 {
+            var target: SIMD3<Float>
+            if pose.view != .side, let p = pose.pointer {
+                let onFloor = SIMD3<Float>(Float(p.x), ySign * Float(p.y), 0) * Lizard3DModel.metersPerPoint
+                target = carrierRotation.transpose * (onFloor - carrierPosition) / scale
+                // Raise the target so the head lifts a little as it turns (about 25°).
+                let headPosition = position(globals[head])
+                let flatDistance = simd_length((target - headPosition) - up * simd_dot(target - headPosition, up))
+                target += up * (simd_dot(headPosition, up) + 0.45 * flatDistance - simd_dot(target, up))
+            } else {
+                let cameraInBody = viewRotation.transpose * cameraPosition
+                let c = bodyMatrix.inverse * SIMD4<Float>(cameraInBody, 1)
+                target = SIMD3(c.x, c.y, c.z)
+            }
+            lookHead(toward: target, amount: Float(pose.lookAtViewer),
+                     glance: Float(pose.glance), globals: &globals)
+        }
+
         // 4. Legs: two-bone IK onto the gait's feet.
         let inverseRotation = carrierRotation.transpose
-        for leg in legs where leg.poseIndex < pose.legs.count {
-            let foot = pose.legs[leg.poseIndex]
-            let footScene = SIMD3<Float>(Float(foot.foot.x), Float(-foot.foot.y), 0) * Lizard3DModel.metersPerPoint
+        for leg in legs {
+            let poseIndex = belly ? (leg.poseIndex ^ 1) : leg.poseIndex   // sides swap when mirrored
+            guard poseIndex < pose.legs.count else { continue }
+            let foot = pose.legs[poseIndex]
+            let footScene = SIMD3<Float>(Float(foot.foot.x), ySign * Float(foot.foot.y), 0) * Lizard3DModel.metersPerPoint
             var target = inverseRotation * (footScene - carrierPosition) / scale
             let height = leg.restEndUp + crouch + Float(foot.lift) / ppu
             target += up * (height - simd_dot(target, up))
@@ -422,6 +472,38 @@ final class RealLizardRig {
         }
         model.jointTransforms = locals
         carrier.isEnabled = true
+    }
+
+    /// Turns Neck1, Neck2 and Head (35%, 35%, 30% each) so the snout points toward `target`
+    /// by `amount`, limited to about 70°, then adds a sideways glance.
+    private func lookHead(toward target: SIMD3<Float>, amount: Float, glance: Float,
+                          globals: inout [simd_float4x4]) {
+        func snoutTip() -> SIMD3<Float> {
+            let t = globals[head] * SIMD4<Float>(snoutTipInHead, 1)
+            return SIMD3(t.x, t.y, t.z)
+        }
+        let headPosition = position(globals[head])
+        let facing = simd_normalize(snoutTip() - headPosition)
+        let toTarget = simd_normalize(target - headPosition)
+        var desired = simd_normalize(facing * (1 - amount) + toTarget * amount)
+        if simd_length(desired) < 0.5 || !desired.x.isFinite { desired = facing }
+
+        var turn = simd_quatf(from: facing, to: desired)
+        let limit: Float = 1.2
+        if turn.angle > limit { turn = simd_quatf(angle: limit, axis: turn.axis) }
+        turn = simd_quatf(angle: glance, axis: up) * turn
+
+        // Spread the turn along the neck; children follow their parents.
+        let localNeck2 = globals[neck1].inverse * globals[neck2]
+        let localHead = globals[neck2].inverse * globals[head]
+        let identity = simd_quatf(angle: 0, axis: [0, 0, 1])
+        for (joint, share) in [(neck1, Float(0.35)), (neck2, Float(0.35)), (head, Float(0.3))] {
+            let part = simd_slerp(identity, turn, share)
+            let g = globals[joint]
+            globals[joint] = matrix(rotation: simd_float3x3(part) * rotation(g), translation: position(g))
+            if joint == neck1 { globals[neck2] = globals[neck1] * localNeck2 }
+            if joint != head { globals[head] = globals[neck2] * localHead }
+        }
     }
 
     private func solveLeg(_ leg: Leg, target: SIMD3<Float>, footYaw: Float, globals: inout [simd_float4x4]) {

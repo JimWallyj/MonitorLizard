@@ -33,6 +33,15 @@ nonisolated struct LizardPose {
     /// Start and end of the tongue while it's flicking, otherwise nil.
     var tongue: (start: CGPoint, end: CGPoint)?
 
+    // Step 4 (used by the real model): which view to show and where the head looks.
+    var view: LizardView = .top
+    /// 0 = looking ahead, 1 = looking straight at the viewer.
+    var lookAtViewer: CGFloat = 0
+    /// Sideways glance, radians.
+    var glance: CGFloat = 0
+    /// The mouse pointer, in the same coordinates as the body (nil if unknown).
+    var pointer: CGPoint?
+
     /// - Parameter gait: planted feet and tail wave (step 3). Without it, the
     ///   legs swing in place as in the 2D drawing.
     init(_ sim: WanderSimulation, gait: LizardGait? = nil, relativeTo origin: CGPoint) {
