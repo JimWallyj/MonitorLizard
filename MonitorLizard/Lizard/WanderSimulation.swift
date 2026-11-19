@@ -44,6 +44,8 @@ nonisolated struct WanderSimulation {
         var pauseChance: Double = 0.35           // chance of stopping on reaching a target
         var pauseRange: ClosedRange<Double> = 0.8...3.0   // seconds
         var maxTimeStep: Double = 0.1            // longer gaps (e.g. after Pause) are clamped
+        var waypointArrival: CGFloat = 10        // "close enough" to a waypoint on a planned route
+        var routeTurnRate: CGFloat = 3.0         // sharper turns on a route, to round window corners
     }
 
     let config: Config
@@ -60,9 +62,23 @@ nonisolated struct WanderSimulation {
     private(set) var pauseRemaining: Double = 0
 
     private var rng: SeededRandom
+    /// A planned route (e.g. along a window edge), followed in order before wandering resumes.
+    private(set) var waypoints: [CGPoint] = []
 
     var head: CGPoint { spine[0] }
     var isWalking: Bool { pauseRemaining <= 0 }
+    var isFollowingRoute: Bool { !waypoints.isEmpty }
+
+    /// Side view: pick wander targets only to the left or right, so the lizard stays in profile.
+    var levelWalking = false
+    /// Areas wander targets should avoid (e.g. windows, so it doesn't head behind them).
+    var obstacles: [CGRect] = []
+
+    /// Walk through `points` in order (an empty list cancels the current route).
+    mutating func follow(_ points: [CGPoint]) {
+        waypoints = points
+        if let first = points.first { target = first }
+    }
 
     init(start: CGPoint,
          heading: CGFloat = 0,
@@ -97,7 +113,23 @@ nonisolated struct WanderSimulation {
         // Pick a new target on arrival, or if the screen changed size and
         // the old target is now out of reach. Sometimes stop for a look first.
         let area = walkableArea(in: bounds)
-        if !area.contains(target) || Self.distance(head, target) < config.arrivalDistance {
+        if !waypoints.isEmpty {
+            // On a route: head for the next waypoint; at the end, maybe stop for a look.
+            if Self.distance(head, waypoints[0]) < config.waypointArrival {
+                waypoints.removeFirst()
+                if waypoints.isEmpty {
+                    if Double.random(in: 0..<1, using: &rng) < config.pauseChance {
+                        pauseRemaining = Double.random(in: config.pauseRange, using: &rng)
+                    }
+                    target = randomTarget(in: bounds)
+                    if pauseRemaining > 0 { return }
+                } else {
+                    target = waypoints[0]
+                }
+            } else {
+                target = waypoints[0]
+            }
+        } else if !area.contains(target) || Self.distance(head, target) < config.arrivalDistance {
             if area.contains(target), Double.random(in: 0..<1, using: &rng) < config.pauseChance {
                 pauseRemaining = Double.random(in: config.pauseRange, using: &rng)
             }
@@ -108,7 +140,7 @@ nonisolated struct WanderSimulation {
         // Turn toward the target, no faster than the maximum turn rate.
         let desired = atan2(target.y - head.y, target.x - head.x)
         let turn = Self.normalizedAngle(desired - heading)
-        let maxTurn = config.maxTurnRate * CGFloat(dt)
+        let maxTurn = (waypoints.isEmpty ? config.maxTurnRate : config.routeTurnRate) * CGFloat(dt)
         heading = Self.normalizedAngle(heading + min(max(turn, -maxTurn), maxTurn))
 
         // Step forward, swaying side to side in time with the stride.
@@ -141,8 +173,14 @@ nonisolated struct WanderSimulation {
 
     private mutating func randomTarget(in bounds: CGRect) -> CGPoint {
         let area = walkableArea(in: bounds)
-        return CGPoint(x: CGFloat.random(in: area.minX...area.maxX, using: &rng),
-                       y: CGFloat.random(in: area.minY...area.maxY, using: &rng))
+        var candidate = head
+        for _ in 0..<10 {
+            candidate = CGPoint(x: CGFloat.random(in: area.minX...area.maxX, using: &rng),
+                                y: CGFloat.random(in: area.minY...area.maxY, using: &rng))
+            if levelWalking { candidate.y = min(max(head.y, area.minY), area.maxY) }
+            if !obstacles.contains(where: { $0.insetBy(dx: -30, dy: -30).contains(candidate) }) { break }
+        }
+        return candidate
     }
 
     static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {

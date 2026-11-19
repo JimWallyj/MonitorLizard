@@ -13,6 +13,7 @@ struct ContentView: View {
     @AppStorage(RendererKind.storageKey) private var rendererRaw = RendererKind.canvas2D.rawValue
     @AppStorage(LizardView.storageKey) private var viewRaw = LizardView.top.rawValue
     @AppStorage(LizardView.forceLookKey) private var forceLook = false
+    @AppStorage(WindowScanner.followEdgesKey) private var followEdges = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -58,6 +59,7 @@ struct ContentView: View {
             .pickerStyle(.menu)
 
             Toggle("Look at me (test)", isOn: $forceLook)
+            Toggle("Follow window edges (test)", isOn: $followEdges)
         }
         .padding(24)
         .frame(width: 340)

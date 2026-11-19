@@ -30,6 +30,13 @@ final class LizardAnimator: NSObject {
     private var viewMode: LizardView = .top
     private var forceLook = false
     private var lastDrawnPointer: CGPoint?
+
+    // Step 5: following window edges.
+    private var followEdges = false
+    private var edgePlanner = EdgePlanner()
+    private var followedWindow: ScreenWindow?
+    private var lastWindowScan: CFTimeInterval = 0
+    private var windows: [ScreenWindow] = []
     private var displayLink: CADisplayLink?
     private var lastTimestamp: CFTimeInterval?
     private var currentRate: Float = 0
@@ -81,7 +88,14 @@ final class LizardAnimator: NSObject {
     }
 
     /// Phase 1 test switches from the control window: camera view and "look at me".
-    func setTestOptions(view: LizardView, forceLook: Bool) {
+    func setTestOptions(view: LizardView, forceLook: Bool, followEdges: Bool) {
+        if followEdges != self.followEdges {
+            self.followEdges = followEdges
+            if !followEdges {                       // switched off: drop any route
+                simulation?.follow([])
+                followedWindow = nil
+            }
+        }
         guard view != viewMode || forceLook != self.forceLook else { return }
         viewMode = view
         self.forceLook = forceLook
@@ -99,7 +113,15 @@ final class LizardAnimator: NSObject {
                                                  heading: .random(in: -.pi ... .pi),
                                                  bounds: bounds)
         let deltaTime = lastTimestamp.map { now - $0 } ?? 0
+        sim.levelWalking = viewMode == .side
         sim.step(by: deltaTime, in: bounds)
+        if followEdges && viewMode != .side {
+            updateEdgeRoute(&sim, now: now, bounds: bounds)
+        } else if sim.isFollowingRoute || !sim.obstacles.isEmpty {
+            sim.follow([])                      // edges don't apply in side view or when switched off
+            sim.obstacles = []
+            followedWindow = nil
+        }
         lastTimestamp = now
         simulation = sim
 
@@ -146,6 +168,37 @@ final class LizardAnimator: NSObject {
         renderer.view.setFrameOrigin(CGPoint(x: center.x - half, y: viewY - half))
         renderer.apply(pose, simulation: sim)
         drawsSinceReport += 1
+    }
+
+    /// Twice a second: check the windows, drop a route whose window moved or closed,
+    /// and start a new route along the nearest window when the lizard is free.
+    private func updateEdgeRoute(_ sim: inout WanderSimulation, now: CFTimeInterval, bounds: CGRect) {
+        // Twice a second: re-read the windows; drop a route whose window moved or closed.
+        if now - lastWindowScan >= 0.5 {
+            lastWindowScan = now
+            windows = WindowScanner.normalWindows().filter { $0.frame.intersects(bounds) }
+            sim.obstacles = windows.map(\.frame)
+            if let followed = followedWindow, sim.isFollowingRoute,
+               windows.first(where: { $0.id == followed.id })?.frame != followed.frame {
+                sim.follow([])
+                followedWindow = nil
+            }
+        }
+
+        // Every frame: when free, start the next route at the nearest window corner,
+        // so it carries on around the window instead of crossing behind it.
+        guard !sim.isFollowingRoute, sim.isWalking else { return }
+        let head = sim.head
+        let nearest = windows.sorted {
+            EdgePlanner.distance(from: head, to: $0.frame) < EdgePlanner.distance(from: head, to: $1.frame)
+        }
+        for window in nearest.prefix(3) {
+            if let route = edgePlanner.plan(around: window.frame, in: bounds, startNear: head) {
+                sim.follow(route)
+                followedWindow = window
+                return
+            }
+        }
     }
 
     /// The mouse pointer in the habitat's coordinates (y down), or nil if unavailable.

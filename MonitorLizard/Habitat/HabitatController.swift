@@ -32,7 +32,8 @@ final class HabitatController: HabitatPresenting {
             let animator = LizardAnimator(container: content, kind: currentRendererKind)
             self.animator = animator
             window.orderFrontRegardless()
-            animator.setTestOptions(view: currentView, forceLook: currentForceLook)
+            animator.setTestOptions(view: currentView, forceLook: currentForceLook,
+                                    followEdges: currentFollowEdges)
             animator.start()
             startObserving()
         }
@@ -67,6 +68,10 @@ final class HabitatController: HabitatPresenting {
         LizardView(rawValue: UserDefaults.standard.string(forKey: LizardView.storageKey) ?? "") ?? .top
     }
 
+    private var currentFollowEdges: Bool {
+        UserDefaults.standard.bool(forKey: WindowScanner.followEdgesKey)
+    }
+
     private var currentForceLook: Bool {
         UserDefaults.standard.bool(forKey: LizardView.forceLookKey)
     }
@@ -87,7 +92,8 @@ final class HabitatController: HabitatPresenting {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.animator?.setKind(self.currentRendererKind)
-                self.animator?.setTestOptions(view: self.currentView, forceLook: self.currentForceLook)
+                self.animator?.setTestOptions(view: self.currentView, forceLook: self.currentForceLook,
+                                              followEdges: self.currentFollowEdges)
             }
         })
     }
