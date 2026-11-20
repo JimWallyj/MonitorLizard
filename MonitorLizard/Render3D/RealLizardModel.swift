@@ -40,19 +40,67 @@ final class RealLizardModel: LizardScene3D {
         camera.position = [0, 0, distance]
         root.addChild(camera)
 
-        let key = DirectionalLight()
-        key.light.intensity = 4_500
         key.look(at: .zero, from: [-3, 4, 6], relativeTo: nil)
         root.addChild(key)
 
-        let fill = DirectionalLight()
-        fill.light.intensity = 2_200
         fill.look(at: .zero, from: [0, 0, 10], relativeTo: nil)
         root.addChild(fill)
 
+        // The sky image is +Y up; turn it so its zenith faces the viewer (+Z).
+        sky.orientation = simd_quatf(angle: .pi / 2, axis: [1, 0, 0])
+        root.addChild(sky)
+
         root.addChild(carrier)
+        applyLighting(LightingPreset.current)
 
         Task { [weak self] in await self?.load() }
+        Task { [weak self] in await self?.loadSky() }
+
+        lightingObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let preset = LightingPreset.current
+                if preset != self.lighting { self.applyLighting(preset) }
+            }
+        }
+    }
+
+    // MARK: - Lighting
+
+    private let key = DirectionalLight()
+    private let fill = DirectionalLight()
+    private let sky = Entity()
+    private var skyLight: ImageBasedLightComponent?
+    private var lighting: LightingPreset?
+    private var lightingObserver: (any NSObjectProtocol)?
+
+    private func loadSky() async {
+        guard let image = SkyImage.make() else { return }
+        do {
+            let environment = try await EnvironmentResource(equirectangular: image)
+            skyLight = ImageBasedLightComponent(source: .single(environment))
+            carrier.components.set(ImageBasedLightReceiverComponent(imageBasedLight: sky))
+            if let lighting { applyLighting(lighting) }
+        } catch {
+            print("Monitor Lizard: couldn't make the sky light: \(error)")
+        }
+    }
+
+    private func applyLighting(_ preset: LightingPreset) {
+        lighting = preset
+        key.light.intensity = preset.sunIntensity
+        key.isEnabled = preset.sunIntensity > 0
+        fill.light.intensity = preset.fillIntensity
+        fill.isEnabled = preset.fillIntensity > 0
+        if let exponent = preset.skyExponent, var light = skyLight {
+            light.intensityExponent = exponent
+            sky.components.set(light)
+        } else {
+            sky.components.remove(ImageBasedLightComponent.self)
+        }
+        print("Monitor Lizard: lighting \(preset.displayName)")
     }
 
     func apply(_ pose: LizardPose) {
