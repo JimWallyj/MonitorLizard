@@ -34,6 +34,7 @@ final class HabitatController: HabitatPresenting {
             window.orderFrontRegardless()
             animator.setTestOptions(view: currentView, forceLook: currentForceLook,
                                     followEdges: currentFollowEdges)
+            animator.setPreset(currentPreset)
             animator.start()
             startObserving()
         }
@@ -68,6 +69,10 @@ final class HabitatController: HabitatPresenting {
         LizardView(rawValue: UserDefaults.standard.string(forKey: LizardView.storageKey) ?? "") ?? .top
     }
 
+    private var currentPreset: PerformancePreset {
+        PerformancePreset(rawValue: UserDefaults.standard.string(forKey: PerformancePreset.storageKey) ?? "") ?? .lowFPS
+    }
+
     private var currentFollowEdges: Bool {
         UserDefaults.standard.bool(forKey: WindowScanner.followEdgesKey)
     }
@@ -94,6 +99,7 @@ final class HabitatController: HabitatPresenting {
                 self.animator?.setKind(self.currentRendererKind)
                 self.animator?.setTestOptions(view: self.currentView, forceLook: self.currentForceLook,
                                               followEdges: self.currentFollowEdges)
+                self.animator?.setPreset(self.currentPreset)
             }
         })
     }

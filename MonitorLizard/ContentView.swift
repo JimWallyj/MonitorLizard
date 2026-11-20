@@ -14,6 +14,7 @@ struct ContentView: View {
     @AppStorage(LizardView.storageKey) private var viewRaw = LizardView.top.rawValue
     @AppStorage(LizardView.forceLookKey) private var forceLook = false
     @AppStorage(WindowScanner.followEdgesKey) private var followEdges = false
+    @AppStorage(PerformancePreset.storageKey) private var presetRaw = PerformancePreset.lowFPS.rawValue
 
     var body: some View {
         VStack(spacing: 16) {
@@ -60,6 +61,13 @@ struct ContentView: View {
 
             Toggle("Look at me (test)", isOn: $forceLook)
             Toggle("Follow window edges (test)", isOn: $followEdges)
+
+            Picker("Performance (test)", selection: $presetRaw) {
+                ForEach(PerformancePreset.allCases) { preset in
+                    Text(preset.displayName).tag(preset.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
         }
         .padding(24)
         .frame(width: 340)

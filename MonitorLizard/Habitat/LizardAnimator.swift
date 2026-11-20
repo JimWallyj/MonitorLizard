@@ -40,6 +40,7 @@ final class LizardAnimator: NSObject {
     private var displayLink: CADisplayLink?
     private var lastTimestamp: CFTimeInterval?
     private var currentRate: Float = 0
+    private var preset: PerformancePreset = .lowFPS
     /// What was last drawn while resting, so an unchanged pose isn't redrawn.
     private var lastRestingTongueOut: Bool?
 
@@ -83,11 +84,20 @@ final class LizardAnimator: NSObject {
         renderer.view.removeFromSuperview()
         kind = newKind
         renderer = Self.makeRenderer(for: newKind)
+        renderer.setResolutionScale(preset.resolutionScale)
         container.addSubview(renderer.view)
         if let simulation { place(simulation, force: true) }
     }
 
     /// Phase 1 test switches from the control window: camera view and "look at me".
+    /// Step 6 test switch: drawing resolution and walking frame rate.
+    func setPreset(_ newPreset: PerformancePreset) {
+        guard newPreset != preset else { return }
+        preset = newPreset
+        renderer.setResolutionScale(newPreset.resolutionScale)
+        if let simulation { place(simulation, force: true) }
+    }
+
     func setTestOptions(view: LizardView, forceLook: Bool, followEdges: Bool) {
         if followEdges != self.followEdges {
             self.followEdges = followEdges
@@ -107,6 +117,7 @@ final class LizardAnimator: NSObject {
     @objc private func tick(_ link: CADisplayLink) {
         let now = link.timestamp
         reportRates(at: now)
+        let tickStart = CACurrentMediaTime()
         let bounds = container.bounds
 
         var sim = simulation ?? WanderSimulation(start: CGPoint(x: bounds.midX, y: bounds.midY),
@@ -132,12 +143,14 @@ final class LizardAnimator: NSObject {
         gait.update(with: sim, deltaTime: deltaTime)
         self.gait = gait
         headLook.update(isResting: !sim.isWalking, forceLook: forceLook, deltaTime: deltaTime)
+        FrameTimings.add("simulation", CACurrentMediaTime() - tickStart)
 
         place(sim)
-        setFrameRate(Self.preferredFrameRate(isWalking: sim.isWalking))
+        setFrameRate(sim.isWalking ? preset.walkingFrameRate : Self.restingFrameRate)
     }
 
     private func place(_ sim: WanderSimulation, force: Bool = false) {
+        let placeStart = CACurrentMediaTime()
         let center = sim.spine[sim.spine.count / 2]
         var pose = LizardPose(sim, gait: gait, relativeTo: center)
         pose.view = viewMode
@@ -166,6 +179,7 @@ final class LizardAnimator: NSObject {
         let half = Lizard3DModel.viewSize / 2
         let viewY = viewMode == .side ? container.bounds.height * 0.75 : center.y
         renderer.view.setFrameOrigin(CGPoint(x: center.x - half, y: viewY - half))
+        FrameTimings.add("pose", CACurrentMediaTime() - placeStart)
         renderer.apply(pose, simulation: sim)
         drawsSinceReport += 1
     }
@@ -223,6 +237,7 @@ final class LizardAnimator: NSObject {
                      Double(drawsSinceReport) / elapsed,
                      currentRate,
                      walking ? "walking" : "resting"))
+        print(FrameTimings.report(over: elapsed))
         ticksSinceReport = 0
         drawsSinceReport = 0
         self.lastReportTime = now

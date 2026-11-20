@@ -36,6 +36,11 @@ final class LizardManualRenderer: LizardRendering {
     private let metalLayer = CAMetalLayer()
     private var lastRenderTime = CACurrentMediaTime()
     private var frameInFlight = false
+    private var preferredScale: CGFloat = 2
+
+    func setResolutionScale(_ scale: CGFloat) {
+        preferredScale = scale
+    }
     let view: NSView
 
     init(scene: any LizardScene3D = Lizard3DModel()) {
@@ -66,15 +71,19 @@ final class LizardManualRenderer: LizardRendering {
     }
 
     func apply(_ pose: LizardPose, simulation: WanderSimulation) {
+        let start = CACurrentMediaTime()
         model.apply(pose)
+        let posed = CACurrentMediaTime()
+        FrameTimings.add("rig", posed - start)
         renderFrame()
+        FrameTimings.add("submit", CACurrentMediaTime() - posed)
     }
 
     private func renderFrame() {
         // Skip this tick if the GPU hasn't finished the previous frame.
         guard let renderer, !frameInFlight else { return }
 
-        let scale = view.window?.backingScaleFactor ?? 2
+        let scale = min(preferredScale, view.window?.backingScaleFactor ?? 2)
         let side = Lizard3DModel.viewSize * scale
         if metalLayer.contentsScale != scale { metalLayer.contentsScale = scale }
         if metalLayer.drawableSize.width != side {
@@ -91,9 +100,14 @@ final class LizardManualRenderer: LizardRendering {
             let output = try RealityRenderer.CameraOutput(.singleProjection(colorTexture: drawable.texture))
             frameInFlight = true
             nonisolated(unsafe) let finishedDrawable = drawable
+            let submitted = CACurrentMediaTime()
             try renderer.updateAndRender(deltaTime: deltaTime, cameraOutput: output, onComplete: { [weak self] _ in
                 finishedDrawable.present()
-                Task { @MainActor in self?.frameInFlight = false }
+                let finished = CACurrentMediaTime()
+                Task { @MainActor in
+                    self?.frameInFlight = false
+                    FrameTimings.add("gpu wait", finished - submitted)
+                }
             })
         } catch {
             frameInFlight = false

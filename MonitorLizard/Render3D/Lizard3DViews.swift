@@ -17,10 +17,13 @@ protocol LizardRendering: AnyObject {
     /// Leg geometry for the gait, when the renderer's lizard differs from the stand-in.
     var gaitConfig: LizardGait.Config? { get }
     func apply(_ pose: LizardPose, simulation: WanderSimulation)
+    func setResolutionScale(_ scale: CGFloat)
 }
 
 extension LizardRendering {
     var gaitConfig: LizardGait.Config? { nil }
+    /// Step 6 test: pixels per point to draw at. Only the manual 3D renderer uses it.
+    func setResolutionScale(_ scale: CGFloat) {}
 }
 
 private func squareFrame() -> CGRect {
