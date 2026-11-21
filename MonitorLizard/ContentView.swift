@@ -16,6 +16,7 @@ struct ContentView: View {
     @AppStorage(WindowScanner.followEdgesKey) private var followEdges = false
     @AppStorage(PerformancePreset.storageKey) private var presetRaw = PerformancePreset.lowFPS.rawValue
     @AppStorage(LightingPreset.storageKey) private var lightingRaw = LightingPreset.softSky.rawValue
+    @AppStorage(ShadowPreset.storageKey) private var shadowRaw = ShadowPreset.darker.rawValue
 
     var body: some View {
         VStack(spacing: 16) {
@@ -72,6 +73,13 @@ struct ContentView: View {
 
             Picker("Lighting (test)", selection: $lightingRaw) {
                 ForEach(LightingPreset.allCases) { preset in
+                    Text(preset.displayName).tag(preset.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Picker("Shadow (test)", selection: $shadowRaw) {
+                ForEach(ShadowPreset.allCases) { preset in
                     Text(preset.displayName).tag(preset.rawValue)
                 }
             }

@@ -37,6 +37,7 @@ final class LizardManualRenderer: LizardRendering {
     private var lastRenderTime = CACurrentMediaTime()
     private var frameInFlight = false
     private var preferredScale: CGFloat = 2
+    private let shadow = ContactShadow(size: Lizard3DModel.viewSize)
 
     func setResolutionScale(_ scale: CGFloat) {
         preferredScale = scale
@@ -54,7 +55,14 @@ final class LizardManualRenderer: LizardRendering {
         let hostView = NSView(frame: CGRect(x: 0, y: 0,
                                             width: Lizard3DModel.viewSize,
                                             height: Lizard3DModel.viewSize))
-        hostView.layer = metalLayer          // layer-hosting view: we own the layer
+        // Layer-hosting view: we own the layers. The soft shadow sits underneath
+        // the lizard's drawing.
+        let container = CALayer()
+        container.frame = hostView.bounds
+        metalLayer.frame = hostView.bounds
+        container.addSublayer(shadow.layer)
+        container.addSublayer(metalLayer)
+        hostView.layer = container
         hostView.wantsLayer = true
         view = hostView
 
@@ -75,13 +83,17 @@ final class LizardManualRenderer: LizardRendering {
         model.apply(pose)
         let posed = CACurrentMediaTime()
         FrameTimings.add("rig", posed - start)
-        renderFrame()
+        if renderFrame() {
+            shadow.update(pose, liftHeight: (gaitConfig ?? LizardGait.Config()).liftHeight)
+        }
         FrameTimings.add("submit", CACurrentMediaTime() - posed)
     }
 
-    private func renderFrame() {
+    /// Returns true if a frame was submitted.
+    @discardableResult
+    private func renderFrame() -> Bool {
         // Skip this tick if the GPU hasn't finished the previous frame.
-        guard let renderer, !frameInFlight else { return }
+        guard let renderer, !frameInFlight else { return false }
 
         let scale = min(preferredScale, view.window?.backingScaleFactor ?? 2)
         let side = Lizard3DModel.viewSize * scale
@@ -90,7 +102,7 @@ final class LizardManualRenderer: LizardRendering {
             metalLayer.drawableSize = CGSize(width: side, height: side)
         }
 
-        guard let drawable = metalLayer.nextDrawable() else { return }
+        guard let drawable = metalLayer.nextDrawable() else { return false }
 
         let now = CACurrentMediaTime()
         let deltaTime = min(now - lastRenderTime, 0.1)
@@ -109,9 +121,11 @@ final class LizardManualRenderer: LizardRendering {
                     FrameTimings.add("gpu wait", finished - submitted)
                 }
             })
+            return true
         } catch {
             frameInFlight = false
             print("Monitor Lizard: render failed: \(error)")
+            return false
         }
     }
 }
