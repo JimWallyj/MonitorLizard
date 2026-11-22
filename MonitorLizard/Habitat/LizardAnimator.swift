@@ -27,6 +27,7 @@ final class LizardAnimator: NSObject {
     private var simulation: WanderSimulation?
     private var gait: LizardGait?
     private var headLook = HeadLook()
+    private var tongue = TongueFlick()
     private var viewMode: LizardView = .top
     private var forceLook = false
     private var lastDrawnPointer: CGPoint?
@@ -143,10 +144,12 @@ final class LizardAnimator: NSObject {
         gait.update(with: sim, deltaTime: deltaTime)
         self.gait = gait
         headLook.update(isResting: !sim.isWalking, forceLook: forceLook, deltaTime: deltaTime)
+        tongue.update(isWalking: sim.isWalking, deltaTime: deltaTime)
         FrameTimings.add("simulation", CACurrentMediaTime() - tickStart)
 
         place(sim)
-        setFrameRate(sim.isWalking ? preset.walkingFrameRate : Self.restingFrameRate)
+        // Full rate while walking or while the tongue is flicking (it's quick).
+        setFrameRate(sim.isWalking || tongue.isActive ? preset.walkingFrameRate : Self.restingFrameRate)
     }
 
     private func place(_ sim: WanderSimulation, force: Bool = false) {
@@ -156,6 +159,15 @@ final class LizardAnimator: NSObject {
         pose.view = viewMode
         pose.lookAtViewer = headLook.amount
         pose.glance = headLook.glance
+        pose.tongueShape = tongue.shape
+        if tongue.extent > 0 {
+            // The stand-ins draw the tongue as a line from the snout.
+            let f = CGVector(dx: cos(pose.headAngle), dy: sin(pose.headAngle))
+            let start = PlaceholderLizardRenderer.offset(pose.snoutCenter, by: f, 8)
+            pose.tongue = (start, PlaceholderLizardRenderer.offset(start, by: f, 14 * tongue.extent * tongue.shape.reach))
+        } else {
+            pose.tongue = nil
+        }
         let pointer = pointerLocation()
         pose.pointer = pointer.map { CGPoint(x: $0.x - center.x, y: $0.y - center.y) }
 
@@ -169,7 +181,7 @@ final class LizardAnimator: NSObject {
         // While resting, skip frames where nothing changed: feet settled,
         // tail still, head still, tongue unchanged.
         let tongueOut = pose.tongue != nil
-        let settled = (gait?.isSettled ?? true) && headLook.isSettled
+        let settled = (gait?.isSettled ?? true) && headLook.isSettled && !tongue.isActive
         if !force, !sim.isWalking, settled, !pointerMoved, lastRestingTongueOut == tongueOut { return }
         lastRestingTongueOut = sim.isWalking ? nil : tongueOut
         lastDrawnPointer = pointer

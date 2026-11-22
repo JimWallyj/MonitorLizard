@@ -199,6 +199,9 @@ final class RealLizardRig {
     /// Neck and head joints, and the snout tip in the head's own frame (for the head look).
     private let neck1: Int, neck2: Int, head: Int
     private let snoutTipInHead: SIMD3<Float>
+    /// The forked tongue, and where the mouth is in the head's frame.
+    private let tongue: LizardTongue
+    private let mouthInHead: simd_float4x4
 
     init(model: ModelEntity) throws {
         self.model = model
@@ -304,6 +307,28 @@ final class RealLizardRig {
         snoutTipInHead = SIMD3(tipInHead.x, tipInHead.y, tipInHead.z)
         let ppu = Self.pathLength / tailEndArc
         pointsPerUnit = ppu
+
+        // Tongue: out of the mouth just under the snout tip, about twice the head's length.
+        let tipInHead3 = SIMD3<Float>(tipInHead.x, tipInHead.y, tipInHead.z)
+        let headLength = simd_length(tipInHead3) * ppu
+        let outInHead = simd_normalize(tipInHead3)
+        let restHeadRotation = simd_float3x3(columns: (
+            SIMD3(globals[head].columns.0.x, globals[head].columns.0.y, globals[head].columns.0.z),
+            SIMD3(globals[head].columns.1.x, globals[head].columns.1.y, globals[head].columns.1.z),
+            SIMD3(globals[head].columns.2.x, globals[head].columns.2.y, globals[head].columns.2.z)))
+        let upGuess = restHeadRotation.inverse * up
+        let upInHead = simd_normalize(upGuess - outInHead * simd_dot(upGuess, outInHead))
+        let sideInHead = simd_cross(upInHead, outInHead)
+        // Round 3: 2.5 pt back inside the snout and 2.5 pt up (round 4: 3.5 looked like the nose), so it leaves the mouth
+        // (not the chin) in side view and stays hidden until it comes out.
+        let mouthBack: Float = 2.5, mouthUp: Float = 2.5
+        let mouth = tipInHead3 - (outInHead * mouthBack - upInHead * mouthUp) / ppu
+        let k = 1 / ppu                          // tongue is built in points
+        mouthInHead = simd_float4x4(columns: (
+            SIMD4(outInHead * k, 0), SIMD4(sideInHead * k, 0), SIMD4(upInHead * k, 0), SIMD4(mouth, 1)))
+        tongue = LizardTongue(length: min(2 * headLength, 36))
+        model.addChild(tongue.root)
+        print("Monitor Lizard: head \(Int(headLength)) pt long; tongue \(Int(min(2 * headLength, 36))) pt.")
 
         // Bones that follow the path. Forward bones point toward the head.
         var bones: [ChainBone] = []
@@ -510,6 +535,10 @@ final class RealLizardRig {
             target += up * (height - simd_dot(target, up))
             solveLeg(leg, target: target, footYaw: yaw[leg.body] ?? 0, globals: &globals)
         }
+
+        // 4b. Tongue, at the mouth of the (possibly turned) head.
+        tongue.root.transform = Transform(matrix: globals[head] * mouthInHead)
+        tongue.update(pose.tongueShape)
 
         // 5. Back to local transforms for RealityKit.
         var locals: [Transform] = []

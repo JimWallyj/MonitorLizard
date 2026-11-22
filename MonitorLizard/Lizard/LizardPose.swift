@@ -42,6 +42,9 @@ nonisolated struct LizardPose {
     /// The mouse pointer, in the same coordinates as the body (nil if unknown).
     var pointer: CGPoint?
 
+    // Phase 2 step 3 (real model): the forked tongue.
+    var tongueShape = TongueFlick.Shape()
+
     /// - Parameter gait: planted feet and tail wave (step 3). Without it, the
     ///   legs swing in place as in the 2D drawing.
     init(_ sim: WanderSimulation, gait: LizardGait? = nil, relativeTo origin: CGPoint) {
