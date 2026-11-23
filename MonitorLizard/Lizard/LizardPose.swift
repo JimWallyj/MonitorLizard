@@ -45,6 +45,10 @@ nonisolated struct LizardPose {
     // Phase 2 step 3 (real model): the forked tongue.
     var tongueShape = TongueFlick.Shape()
 
+    // Phase 2 step 4 (real model): breathing. 0…1 at natural strength (more if exaggerated).
+    var breath: CGFloat = 0
+    var throat: CGFloat = 0
+
     /// - Parameter gait: planted feet and tail wave (step 3). Without it, the
     ///   legs swing in place as in the 2D drawing.
     init(_ sim: WanderSimulation, gait: LizardGait? = nil, relativeTo origin: CGPoint) {

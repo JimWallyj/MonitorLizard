@@ -32,6 +32,9 @@ nonisolated struct SeededRandom: RandomNumberGenerator {
 
 nonisolated struct WanderSimulation {
 
+    /// Test switch (Phase 2): stop at every target and rest 10–20 s, to watch breathing.
+    nonisolated static let longRestsKey = "lizardLongRests"
+
     struct Config {
         var walkSpeed: CGFloat = 35              // points per second (a slow, deliberate walk)
         var maxTurnRate: CGFloat = 1.4           // radians per second
@@ -48,7 +51,7 @@ nonisolated struct WanderSimulation {
         var routeTurnRate: CGFloat = 3.0         // sharper turns on a route, to round window corners
     }
 
-    let config: Config
+    var config: Config
 
     /// Spine points from the head (index 0) to the tail tip.
     private(set) var spine: [CGPoint]

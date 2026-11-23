@@ -17,6 +17,8 @@ struct ContentView: View {
     @AppStorage(PerformancePreset.storageKey) private var presetRaw = PerformancePreset.lowFPS.rawValue
     @AppStorage(LightingPreset.storageKey) private var lightingRaw = LightingPreset.softSky.rawValue
     @AppStorage(ShadowPreset.storageKey) private var shadowRaw = ShadowPreset.darker.rawValue
+    @AppStorage(BreathingPreset.storageKey) private var breathingRaw = BreathingPreset.normal.rawValue
+    @AppStorage(WanderSimulation.longRestsKey) private var longRests = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -80,6 +82,15 @@ struct ContentView: View {
 
             Picker("Shadow (test)", selection: $shadowRaw) {
                 ForEach(ShadowPreset.allCases) { preset in
+                    Text(preset.displayName).tag(preset.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+
+            Toggle("Long rests (test)", isOn: $longRests)
+
+            Picker("Breathing (test)", selection: $breathingRaw) {
+                ForEach(BreathingPreset.allCases) { preset in
                     Text(preset.displayName).tag(preset.rawValue)
                 }
             }

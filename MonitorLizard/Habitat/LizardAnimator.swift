@@ -28,6 +28,10 @@ final class LizardAnimator: NSObject {
     private var gait: LizardGait?
     private var headLook = HeadLook()
     private var tongue = TongueFlick()
+    private var breathing = Breathing()
+    private var lastDrawTime: CFTimeInterval = 0
+    private var lastDrawnBreath: CGFloat = 0
+    private var lastDrawnThroat: CGFloat = 0
     private var viewMode: LizardView = .top
     private var forceLook = false
     private var lastDrawnPointer: CGPoint?
@@ -126,6 +130,13 @@ final class LizardAnimator: NSObject {
                                                  bounds: bounds)
         let deltaTime = lastTimestamp.map { now - $0 } ?? 0
         sim.levelWalking = viewMode == .side
+        if UserDefaults.standard.bool(forKey: WanderSimulation.longRestsKey) {
+            sim.config.pauseChance = 1
+            sim.config.pauseRange = 10...20
+        } else {
+            sim.config.pauseChance = WanderSimulation.Config().pauseChance
+            sim.config.pauseRange = WanderSimulation.Config().pauseRange
+        }
         sim.step(by: deltaTime, in: bounds)
         if followEdges && viewMode != .side {
             updateEdgeRoute(&sim, now: now, bounds: bounds)
@@ -145,6 +156,7 @@ final class LizardAnimator: NSObject {
         self.gait = gait
         headLook.update(isResting: !sim.isWalking, forceLook: forceLook, deltaTime: deltaTime)
         tongue.update(isWalking: sim.isWalking, deltaTime: deltaTime)
+        breathing.update(isResting: !sim.isWalking, deltaTime: deltaTime)
         FrameTimings.add("simulation", CACurrentMediaTime() - tickStart)
 
         place(sim)
@@ -160,6 +172,9 @@ final class LizardAnimator: NSObject {
         pose.lookAtViewer = headLook.amount
         pose.glance = headLook.glance
         pose.tongueShape = tongue.shape
+        let breathStrength = BreathingPreset.current.multiplier
+        pose.breath = breathing.chest * breathStrength
+        pose.throat = breathing.throat * breathStrength
         if tongue.extent > 0 {
             // The stand-ins draw the tongue as a line from the snout.
             let f = CGVector(dx: cos(pose.headAngle), dy: sin(pose.headAngle))
@@ -182,7 +197,16 @@ final class LizardAnimator: NSObject {
         // tail still, head still, tongue unchanged.
         let tongueOut = pose.tongue != nil
         let settled = (gait?.isSettled ?? true) && headLook.isSettled && !tongue.isActive
-        if !force, !sim.isWalking, settled, !pointerMoved, lastRestingTongueOut == tongueOut { return }
+        let now = CACurrentMediaTime()
+        if !force, !sim.isWalking, settled, !pointerMoved, lastRestingTongueOut == tongueOut {
+            // Only breathing is moving: draw it sparingly (about 5 fps, 10 during a throat burst).
+            let breathMoved = abs(pose.breath - lastDrawnBreath) > 0.01 || abs(pose.throat - lastDrawnThroat) > 0.01
+            let interval = breathing.isThroatActive ? 0.09 : 0.19
+            guard breathMoved, now - lastDrawTime >= interval else { return }
+        }
+        lastDrawTime = now
+        lastDrawnBreath = pose.breath
+        lastDrawnThroat = pose.throat
         lastRestingTongueOut = sim.isWalking ? nil : tongueOut
         lastDrawnPointer = pointer
 

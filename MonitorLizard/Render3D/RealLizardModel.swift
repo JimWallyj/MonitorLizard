@@ -199,6 +199,15 @@ final class RealLizardRig {
     /// Neck and head joints, and the snout tip in the head's own frame (for the head look).
     private let neck1: Int, neck2: Int, head: Int
     private let snoutTipInHead: SIMD3<Float>
+    /// Bones that swell for breathing (ribs) and throat pumping, with which of their own
+    /// axes points sideways and which up, and how much they swell at full strength.
+    private struct Swell {
+        let joint: Int
+        let sideAxis: Int, upAxis: Int
+        let side: Float, up: Float
+        let fromThroat: Bool
+    }
+    private let swells: [Swell]
     /// The forked tongue, and where the mouth is in the head's frame.
     private let tongue: LizardTongue
     private let mouthInHead: simd_float4x4
@@ -326,6 +335,31 @@ final class RealLizardRig {
         let k = 1 / ppu                          // tongue is built in points
         mouthInHead = simd_float4x4(columns: (
             SIMD4(outInHead * k, 0), SIMD4(sideInHead * k, 0), SIMD4(upInHead * k, 0), SIMD4(mouth, 1)))
+        // Breathing: swell bones along their own axes (scaling along a bone's own axes
+        // keeps the skinning exact). Find which local axis is sideways and which is up.
+        func swell(_ name: String, side: Float, up upAmount: Float, throat: Bool) throws -> Swell {
+            let j = try index(name)
+            let g = globals[j]
+            let axes = [g.columns.0, g.columns.1, g.columns.2].map { simd_normalize(SIMD3<Float>($0.x, $0.y, $0.z)) }
+            func best(_ v: SIMD3<Float>) -> Int {
+                (0..<3).max { abs(simd_dot(axes[$0], v)) < abs(simd_dot(axes[$1], v)) }!
+            }
+            let sideAxis = best(left)
+            let upAxis = (0..<3).filter { $0 != sideAxis }
+                .max { abs(simd_dot(axes[$0], up)) < abs(simd_dot(axes[$1], up)) }!
+            return Swell(joint: j, sideAxis: sideAxis, upAxis: upAxis, side: side, up: upAmount, fromThroat: throat)
+        }
+        // Round 2: about twice as wide (the body is only ~18 pt across, so 5% didn't show
+        // from above), and the belly area ahead of the hips joins in.
+        swells = [try swell("Spine1", side: 0.07, up: 0.03, throat: false),
+                  try swell("Spine2", side: 0.11, up: 0.04, throat: false),
+                  try swell("Spine3", side: 0.08, up: 0.03, throat: false),
+                  try swell("Neck1", side: 0.07, up: 0.10, throat: true)]
+        let axisNames = ["X", "Y", "Z"]
+        print("Monitor Lizard: breathing bones " + swells.map {
+            "\(shortNames[$0.joint]) side=\(axisNames[$0.sideAxis]) up=\(axisNames[$0.upAxis])"
+        }.joined(separator: ", "))
+
         tongue = LizardTongue(length: min(2 * headLength, 36))
         model.addChild(tongue.root)
         print("Monitor Lizard: head \(Int(headLength)) pt long; tongue \(Int(min(2 * headLength, 36))) pt.")
@@ -539,6 +573,19 @@ final class RealLizardRig {
         // 4b. Tongue, at the mouth of the (possibly turned) head.
         tongue.root.transform = Transform(matrix: globals[head] * mouthInHead)
         tongue.update(pose.tongueShape)
+
+        // 4c. Breathing: swell the ribs and throat along their own sideways and up axes.
+        //     Children keep their own positions (locals are worked out from globals below).
+        let breath = Float(pose.breath), throat = Float(pose.throat)
+        if breath > 0.001 || throat > 0.001 {
+            for s in swells {
+                let amount = s.fromThroat ? throat : breath
+                var d = SIMD3<Float>(repeating: 1)
+                d[s.sideAxis] += s.side * amount
+                d[s.upAxis] += s.up * amount
+                globals[s.joint] = globals[s.joint] * simd_float4x4(diagonal: SIMD4(d, 1))
+            }
+        }
 
         // 5. Back to local transforms for RealityKit.
         var locals: [Transform] = []
