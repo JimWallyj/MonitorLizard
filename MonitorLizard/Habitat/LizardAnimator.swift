@@ -34,6 +34,8 @@ final class LizardAnimator: NSObject {
     }
     nonisolated static let naturalWalkKey = "lizardNaturalSideWalk"
     nonisolated static let halfSpeedKey = "lizardHalfSpeed"
+    /// The walk plays at this fraction of its designed speed (a slow, deliberate prowl).
+    nonisolated static let walkTimeScale = 0.5
     private var breathing = Breathing()
     private var lastDrawTime: CFTimeInterval = 0
     private var lastDrawnBreath: CGFloat = 0
@@ -137,6 +139,10 @@ final class LizardAnimator: NSObject {
         // Test switch: "Half speed" plays the whole lizard at 50%, like slow motion.
         let timeScale = UserDefaults.standard.bool(forKey: Self.halfSpeedKey) ? 0.5 : 1.0
         let deltaTime = (lastTimestamp.map { now - $0 } ?? 0) * timeScale
+        // The walk itself (body, legs, wave, tail, turns, rests) runs at half speed: chosen by the
+        // developer on 2026-11-25 after trying the half-speed test. Tongue, breathing and head
+        // movements keep their own tuned speeds.
+        let walkDelta = deltaTime * Self.walkTimeScale
         sim.levelWalking = viewMode == .side
         if viewMode == .side { if sim.laneY == nil { sim.laneY = sim.head.y } } else { sim.laneY = nil }
         if UserDefaults.standard.bool(forKey: WanderSimulation.longRestsKey) {
@@ -151,7 +157,7 @@ final class LizardAnimator: NSObject {
         // Natural walk: the body wave does the undulating, so the path's own sashay is reduced.
         sim.config.swayAmount = naturalWalk ? 0.12 : WanderSimulation.Config().swayAmount
         sim.config.maxBend = naturalWalk ? 0.3 : nil        // ~17° per joint: no hairpin folds
-        sim.step(by: deltaTime, in: bounds)
+        sim.step(by: walkDelta, in: bounds)
         if followEdges && viewMode != .side {
             updateEdgeRoute(&sim, now: now, bounds: bounds)
         } else if sim.isFollowingRoute || !sim.obstacles.isEmpty {
@@ -186,7 +192,7 @@ final class LizardAnimator: NSObject {
         }
         var gait = (self.gait?.config == wantedConfig ? self.gait : nil)
             ?? LizardGait(simulation: sim, config: wantedConfig)
-        gait.update(with: sim, deltaTime: deltaTime)
+        gait.update(with: sim, deltaTime: walkDelta)
         self.gait = gait
         headLook.update(isResting: !sim.isWalking, forceLook: forceLook, deltaTime: deltaTime)
         tongue.update(isWalking: sim.isWalking, deltaTime: deltaTime)
