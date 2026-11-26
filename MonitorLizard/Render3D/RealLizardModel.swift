@@ -208,6 +208,9 @@ final class RealLizardRig {
         let fromThroat: Bool
     }
     private let swells: [Swell]
+    /// Tail bones from the base to the tip, and the tip's position in the last bone's frame.
+    private let tailJoints: [Int]
+    private let tailTipInLast: SIMD3<Float>
     /// The forked tongue, and where the mouth is in the head's frame.
     private let tongue: LizardTongue
     private let mouthInHead: simd_float4x4
@@ -307,6 +310,9 @@ final class RealLizardRig {
             tailArc.append(s)
         }
         let tailEndArc = s + simd_length(flat(tailEnd - last))
+        tailJoints = tailChain
+        let tipLocal = globals[tailChain[tailChain.count - 1]].inverse * SIMD4<Float>(tailEnd, 1)
+        tailTipInLast = SIMD3(tipLocal.x, tipLocal.y, tipLocal.z)
         self.pelvis = pelvis
         self.pelvisArc = pelvisArc
         self.head = head
@@ -330,7 +336,9 @@ final class RealLizardRig {
         let sideInHead = simd_cross(upInHead, outInHead)
         // Round 3: 2.5 pt back inside the snout and 2.5 pt up (round 4: 3.5 looked like the nose), so it leaves the mouth
         // (not the chin) in side view and stays hidden until it comes out.
-        let mouthBack: Float = 2.5, mouthUp: Float = 2.5
+        // Round 9: only 1 pt back (was 2.5), so the tongue, now angled down, leaves through the
+        // front of the mouth rather than the underside of the jaw.
+        let mouthBack: Float = 1.0, mouthUp: Float = 2.5
         let mouth = tipInHead3 - (outInHead * mouthBack - upInHead * mouthUp) / ppu
         let k = 1 / ppu                          // tongue is built in points
         mouthInHead = simd_float4x4(columns: (
@@ -400,15 +408,21 @@ final class RealLizardRig {
         legs = legList
 
         // Tell the gait where this lizard's feet naturally rest (in points).
-        func legGeometry(_ rootName: String, _ endName: String) throws -> (index: Int, lateral: Float, reach: Float) {
+        func legGeometry(_ rootName: String, _ endName: String) throws
+            -> (index: Int, lateral: Float, reach: Float, rootLateral: Float, rootAlong: Float) {
             let r = try index(rootName), e = try index(endName)
             // Nearest body joint to the leg's root.
             let bodyJoints = forwardChain
             let near = bodyJoints.min { simd_length(flat(pos($0) - pos(r))) < simd_length(flat(pos($1) - pos(r))) }!
             let arcPoints = arc[near]! * ppu
             let spineIndex = Int(((arcPoints - Self.snoutLead) / Self.spineSpacing).rounded())
+            // Round 8 fix: the spine point is up to 4 pt ahead of or behind that body joint;
+            // measure from the spine point itself, so the feet rest where the legs expect them.
+            let behind = arcPoints - (Self.snoutLead + Float(spineIndex) * Self.spineSpacing)
             let offset = flat(pos(e) - pos(near))
-            return (spineIndex, abs(simd_dot(offset, left)) * ppu, simd_dot(offset, forward) * ppu)
+            let rootOffset = flat(pos(r) - pos(near))
+            return (spineIndex, abs(simd_dot(offset, left)) * ppu, simd_dot(offset, forward) * ppu - behind,
+                    abs(simd_dot(rootOffset, left)) * ppu, simd_dot(rootOffset, forward) * ppu - behind)
         }
         let fl = try legGeometry("UpperArm_L", "Hand_L"), fr = try legGeometry("UpperArm_R", "Hand_R")
         let bl = try legGeometry("Thigh_L", "Foot_L"), br = try legGeometry("Thigh_R", "Foot_R")
@@ -419,6 +433,10 @@ final class RealLizardRig {
         config.backLateral = CGFloat((bl.lateral + br.lateral) / 2)
         config.frontReach = CGFloat((fl.reach + fr.reach) / 2)
         config.backReach = CGFloat((bl.reach + br.reach) / 2)
+        config.frontRootLateral = CGFloat((fl.rootLateral + fr.rootLateral) / 2)
+        config.frontRootAlong = CGFloat((fl.rootAlong + fr.rootAlong) / 2)
+        config.backRootLateral = CGFloat((bl.rootLateral + br.rootLateral) / 2)
+        config.backRootAlong = CGFloat((bl.rootAlong + br.rootAlong) / 2)
         config.upperLength = CGFloat(legList[1].upper * ppu)
         config.lowerLength = CGFloat(legList[1].lower * ppu)
 
@@ -440,6 +458,22 @@ final class RealLizardRig {
             return ((along + sqrt(disc)) * ppu, (-along + sqrt(disc)) * ppu)
         }
         let frontRoom = strideRoom(legList[1]), backRoom = strideRoom(legList[3])
+        // How far (points, along the ground) each wrist/ankle can be from its shoulder/hip.
+        func groundReach(_ leg: Leg) -> CGFloat {
+            let vertical = simd_dot(pos(leg.root) - pos(leg.end), up) - crouch
+            let reach = 0.97 * (leg.upper + leg.lower)
+            return CGFloat(sqrt(max(reach * reach - vertical * vertical, 0)) * ppu)
+        }
+        config.frontGroundReach = groundReach(legList[1])
+        config.backGroundReach = groundReach(legList[3])
+        // Diagnostics (round 12): each leg's ground reach versus how far its foot rests from
+        // its shoulder/hip in the model, in points.
+        for (name, leg) in [("front", legList[1]), ("back", legList[3])] {
+            let rest = simd_length(flat(pos(leg.end) - pos(leg.root))) * ppu
+            print("Monitor Lizard: \(name) leg reaches \(String(format: "%.1f", Double(groundReach(leg)))) pt "
+                  + "along the ground; foot rests \(String(format: "%.1f", Double(rest))) pt from the joint; "
+                  + "leg \(String(format: "%.1f", Double((leg.upper + leg.lower) * ppu))) pt long")
+        }
         let frontTotal = frontRoom.back + frontRoom.ahead, backTotal = backRoom.back + backRoom.ahead
         // Centre each rest spot so 60% of the room is behind it (feet travel backward while planted).
         config.frontReach += CGFloat(0.6 * frontTotal - frontRoom.back)
@@ -477,7 +511,11 @@ final class RealLizardRig {
         switch pose.view {
         case .top:   viewRotation = matrix_identity_float3x3
         case .belly: viewRotation = simd_float3x3(simd_quatf(angle: .pi, axis: [1, 0, 0]))
-        case .side:  viewRotation = simd_float3x3(simd_quatf(angle: -.pi / 2, axis: [1, 0, 0]))
+        case .side:
+            // Natural walk: tilted 20° so the back shows a little, as in a real three-quarter
+            // view; that lets the side-to-side bend and the turns read. Otherwise straight profile.
+            let tilt: Float = pose.naturalWalk ? 0.35 : 0
+            viewRotation = simd_float3x3(simd_quatf(angle: -.pi / 2 + tilt, axis: [1, 0, 0]))
         }
 
         // 1. Body path in body-frame points (y up): snout tip, then the body centres.
@@ -510,8 +548,20 @@ final class RealLizardRig {
         let pelvisScene = point(at: pelvisPoints) * Lizard3DModel.metersPerPoint
         let pelvisModel = position(restGlobal[pelvis])
         let offset = carrierRotation * (pelvisModel * scale)
+        // Side view, natural walk: how far through a step each diagonal pair is (0 planted,
+        // 1 mid-step). The body rides up a little as a pair swings over the planted ones.
+        let sideWalk = pose.view == .side && pose.naturalWalk
+        var swing = (a: Float(0), b: Float(0))
+        if pose.naturalWalk, pose.legs.count == 4, pose.liftHeight > 0 {
+            let f = pose.legs.map { Float($0.lift / pose.liftHeight) }
+            swing = (max(f[0], f[3]), max(f[1], f[2]))
+        }
+        // Round 2 (prowl): the body sinks ~1.2 pt lower while walking (elbows and knees
+        // bend more) and only glides up a little with each step.
+        let bodyRise: Float = sideWalk
+            ? 0.35 * max(swing.a, swing.b) - 1.2 * Float(pose.walkAmount) : 0    // points
         let carrierPosition = SIMD3<Float>(pelvisScene.x - offset.x, pelvisScene.y - offset.y,
-                                           -scale * (floorUp + crouch))
+                                           -scale * (floorUp + crouch) + bodyRise * Lizard3DModel.metersPerPoint)
         let bodyMatrix = Transform(scale: SIMD3(repeating: scale),
                                    rotation: simd_quatf(carrierRotation),
                                    translation: carrierPosition).matrix
@@ -534,6 +584,25 @@ final class RealLizardRig {
                 g = matrix(rotation: turned, translation: position(g))
             }
             globals[i] = g
+        }
+
+        // 3a'. Natural walk: the tail slopes down from the hips and lies along the ground.
+        if pose.naturalWalk {
+            let floorHeight = floorUp + crouch - bodyRise / ppu
+            dropTail(toFloorAt: floorHeight, pointsPerUnit: ppu, globals: &globals)
+        }
+
+        // 3a. Side view, natural walk: head carried low and forward, nodding gently with each step.
+        if pose.naturalWalk {
+            let walk = Float(pose.walkAmount)
+            // Round 4: the model's neck rises steeply at rest. Lower the neck ~34° but keep the
+            // head level, so the top of the head lines up with the back and the snout points
+            // straight ahead (a prowl). Lifting to look around comes with Phase 4.
+            let headRotation = rotation(globals[head])
+            raiseNeck(by: -0.6, globals: &globals)
+            globals[head] = matrix(rotation: headRotation, translation: position(globals[head]))
+            let nod = walk * 0.03 * (swing.a - swing.b)                  // gentle nod with each step
+            if abs(nod) > 0.0005 { raiseNeck(by: nod, globals: &globals) }
         }
 
         // 3b. Head look: turn the neck and head toward the viewer (the camera), plus any glance.
@@ -567,7 +636,10 @@ final class RealLizardRig {
             var target = inverseRotation * (footScene - carrierPosition) / scale
             let height = leg.restEndUp + crouch + Float(foot.lift) / ppu
             target += up * (height - simd_dot(target, up))
-            solveLeg(leg, target: target, footYaw: yaw[leg.body] ?? 0, globals: &globals)
+            // Natural walk: a lifted foot hangs loose, toes drooping toward the ground.
+            let droop: Float = pose.naturalWalk && pose.liftHeight > 0
+                ? 0.95 * min(max(Float(foot.lift / pose.liftHeight), 0), 1) : 0
+            solveLeg(leg, target: target, footYaw: yaw[leg.body] ?? 0, droop: droop, globals: &globals)
         }
 
         // 4b. Tongue, at the mouth of the (possibly turned) head.
@@ -596,6 +668,24 @@ final class RealLizardRig {
         }
         model.jointTransforms = locals
         carrier.isEnabled = true
+    }
+
+    /// Pitches Neck1 and Neck2 up by `angle` in all (60% / 40%), about each bone's own
+    /// sideways axis; Neck2 and Head follow along.
+    private func raiseNeck(by angle: Float, globals: inout [simd_float4x4]) {
+        let localNeck2 = globals[neck1].inverse * globals[neck2]
+        let localHead = globals[neck2].inverse * globals[head]
+        for (joint, share) in [(neck1, Float(0.6)), (neck2, Float(0.4))] {
+            let g = globals[joint]
+            // This bone's sideways axis now (rest sideways turned by the bone's current yaw).
+            let turn = rotation(g) * rotation(restGlobal[joint]).transpose
+            let side = simd_normalize(turn * left)
+            // Rotating about −left tips forward toward up (raises the head).
+            let q = simd_quatf(angle: angle * share, axis: -side)
+            globals[joint] = matrix(rotation: simd_float3x3(q) * rotation(g), translation: position(g))
+            if joint == neck1 { globals[neck2] = globals[neck1] * localNeck2 }
+            globals[head] = globals[neck2] * localHead
+        }
     }
 
     /// Turns Neck1, Neck2 and Head (35%, 35%, 30% each) so the snout points toward `target`
@@ -630,10 +720,22 @@ final class RealLizardRig {
         }
     }
 
-    private func solveLeg(_ leg: Leg, target: SIMD3<Float>, footYaw: Float, globals: inout [simd_float4x4]) {
+    private var legSolves = 0
+    private var plantedOutOfReach = 0
+
+    private func solveLeg(_ leg: Leg, target: SIMD3<Float>, footYaw: Float, droop: Float = 0,
+                          globals: inout [simd_float4x4]) {
         let a = position(globals[leg.root])
         let toTarget = target - a
         let rawDistance = simd_length(toTarget)
+        // Diagnostics: a planted foot the leg can't reach gets dragged along (looks like sliding).
+        legSolves += 1
+        if droop < 0.001, rawDistance > (leg.upper + leg.lower) * 0.995 { plantedOutOfReach += 1 }
+        if legSolves >= 800 {
+            print("Monitor Lizard: planted feet out of reach \(plantedOutOfReach * 100 / legSolves)% of the time")
+            legSolves = 0
+            plantedOutOfReach = 0
+        }
         guard rawDistance > 0.000_1 else { return }
         let d = min(max(rawDistance, abs(leg.upper - leg.lower) + 0.000_1), leg.upper + leg.lower - 0.000_1)
         let direction = toTarget / rawDistance
@@ -657,8 +759,70 @@ final class RealLizardRig {
 
         // Hand/foot stays flat and lined up with the body, so the toes don't swivel with the shin.
         let ankle = position(globals[leg.mid] * restLocal[leg.end])
-        let level = simd_float3x3(simd_quatf(angle: footYaw, axis: up)) * rotation(restGlobal[leg.end])
+        var level = simd_float3x3(simd_quatf(angle: footYaw, axis: up)) * rotation(restGlobal[leg.end])
+        if droop > 0.001 {
+            // Tip the toes down: turn about the horizontal axis across the foot
+            // (the bone runs along its own Y axis, toward the toes).
+            let toes = level.columns.1
+            let flatToes = toes - up * simd_dot(toes, up)
+            if simd_length(flatToes) > 0.001 {
+                let across = simd_normalize(simd_cross(up, simd_normalize(flatToes)))
+                level = simd_float3x3(simd_quatf(angle: droop, axis: across)) * level
+            }
+        }
         globals[leg.end] = matrix(rotation: level, translation: ankle)
+    }
+
+    /// Bends the tail bones down (about horizontal axes only, so the sideways wave is kept)
+    /// so the tail slopes from the hips to the ground over its first third, then lies along it.
+    private func dropTail(toFloorAt floorHeight: Float, pointsPerUnit ppu: Float,
+                          globals: inout [simd_float4x4]) {
+        let joints = tailJoints
+        guard joints.count >= 2 else { return }
+        // Each tail bone's offset from the one before, as posed so far.
+        var locals: [simd_float4x4] = [matrix_identity_float4x4]
+        for k in 1..<joints.count { locals.append(globals[joints[k - 1]].inverse * globals[joints[k]]) }
+        let tipInLast = SIMD4<Float>(tailTipInLast, 1)
+        /// Where the tail tip is, given the last tail bone's transform.
+        func tip(_ m: simd_float4x4) -> SIMD3<Float> { let v = m * tipInLast; return SIMD3(v.x, v.y, v.z) }
+
+        let baseHeight = simd_dot(position(globals[joints[0]]), up)
+        // Total tail length, to measure how far along each joint is.
+        var lengths: [Float] = []
+        for k in 0..<joints.count {
+            let child = k + 1 < joints.count ? position(globals[joints[k]] * locals[k + 1])
+                                             : tip(globals[joints[k]])
+            lengths.append(simd_length(child - position(globals[joints[k]])))
+        }
+        let total = max(lengths.reduce(0, +), 0.0001)
+        let baseRadius = 3.0 / ppu, tipRadius = 0.6 / ppu
+        let baseLift = max(baseHeight - floorHeight - baseRadius, 0)
+
+        var along: Float = 0
+        for k in 0..<joints.count {
+            if k > 0 { globals[joints[k]] = globals[joints[k - 1]] * locals[k] }
+            let g = globals[joints[k]]
+            let p = position(g)
+            let child = k + 1 < joints.count ? position(g * locals[k + 1]) : tip(g)
+            along += lengths[k]
+            let s = along / total                                        // 0 at the hips … 1 at the tip
+            let fall = Float(1) - min(s / 0.35, 1)
+            let ease = fall * fall * (3 - 2 * fall)                      // 1 near the hips, 0 by a third
+            let radius = baseRadius + (tipRadius - baseRadius) * s
+            let wanted = floorHeight + radius + baseLift * ease          // the child joint's height
+
+            let v = child - p
+            let length = simd_length(v)
+            guard length > 0.000_1 else { continue }
+            let vertical = simd_dot(v, up)
+            let flat = v - up * vertical
+            guard simd_length(flat) > 0.000_1 else { continue }
+            let newVertical = min(max(wanted - simd_dot(p, up), -0.9 * length), 0.9 * length)
+            let newFlat = sqrt(max(length * length - newVertical * newVertical, 0))
+            let target = simd_normalize(flat) * newFlat + up * newVertical
+            let q = simd_quatf(from: v / length, to: simd_normalize(target))
+            globals[joints[k]] = matrix(rotation: simd_float3x3(q) * rotation(g), translation: p)
+        }
     }
 
     // MARK: - Matrix helpers

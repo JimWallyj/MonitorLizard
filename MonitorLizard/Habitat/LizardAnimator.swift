@@ -28,6 +28,12 @@ final class LizardAnimator: NSObject {
     private var gait: LizardGait?
     private var headLook = HeadLook()
     private var tongue = TongueFlick()
+    /// Test switch (Phase 3): the natural side-view walk, read from UserDefaults.
+    private var naturalWalk: Bool {
+        UserDefaults.standard.object(forKey: Self.naturalWalkKey) as? Bool ?? true
+    }
+    nonisolated static let naturalWalkKey = "lizardNaturalSideWalk"
+    nonisolated static let halfSpeedKey = "lizardHalfSpeed"
     private var breathing = Breathing()
     private var lastDrawTime: CFTimeInterval = 0
     private var lastDrawnBreath: CGFloat = 0
@@ -128,8 +134,11 @@ final class LizardAnimator: NSObject {
         var sim = simulation ?? WanderSimulation(start: CGPoint(x: bounds.midX, y: bounds.midY),
                                                  heading: .random(in: -.pi ... .pi),
                                                  bounds: bounds)
-        let deltaTime = lastTimestamp.map { now - $0 } ?? 0
+        // Test switch: "Half speed" plays the whole lizard at 50%, like slow motion.
+        let timeScale = UserDefaults.standard.bool(forKey: Self.halfSpeedKey) ? 0.5 : 1.0
+        let deltaTime = (lastTimestamp.map { now - $0 } ?? 0) * timeScale
         sim.levelWalking = viewMode == .side
+        if viewMode == .side { if sim.laneY == nil { sim.laneY = sim.head.y } } else { sim.laneY = nil }
         if UserDefaults.standard.bool(forKey: WanderSimulation.longRestsKey) {
             sim.config.pauseChance = 1
             sim.config.pauseRange = 10...20
@@ -137,6 +146,11 @@ final class LizardAnimator: NSObject {
             sim.config.pauseChance = WanderSimulation.Config().pauseChance
             sim.config.pauseRange = WanderSimulation.Config().pauseRange
         }
+        // Natural walk, side view: tight, whipping turns (the body curls right round).
+        sim.config.maxTurnRate = viewMode == .side && naturalWalk ? 3.2 : WanderSimulation.Config().maxTurnRate
+        // Natural walk: the body wave does the undulating, so the path's own sashay is reduced.
+        sim.config.swayAmount = naturalWalk ? 0.12 : WanderSimulation.Config().swayAmount
+        sim.config.maxBend = naturalWalk ? 0.3 : nil        // ~17° per joint: no hairpin folds
         sim.step(by: deltaTime, in: bounds)
         if followEdges && viewMode != .side {
             updateEdgeRoute(&sim, now: now, bounds: bounds)
@@ -149,7 +163,27 @@ final class LizardAnimator: NSObject {
         simulation = sim
 
         // The real model has its own leg positions; rebuild the gait when they change.
-        let wantedConfig = renderer.gaitConfig ?? LizardGait.Config()
+        var wantedConfig = renderer.gaitConfig ?? LizardGait.Config()
+        wantedConfig.naturalSwing = naturalWalk
+        if naturalWalk {
+            // Round 10: longer steps: use nearly all the legs' room (step after ~58% of it is used
+            // behind the rest spot, land ~6.5 pt ahead). The reach check stops feet being dragged.
+            wantedConfig.stepTrigger *= 1.12
+            wantedConfig.stepLead = 0.62
+            // Round 11: quicker leg swings (0.25 s), so a pair waiting for the other pair to land
+            // isn't left stretched for long.
+            wantedConfig.stepDuration = 0.25
+        }
+        // Side view is seen at a 20° tilt, so the sideways wave shows only a third as much: boost it.
+        wantedConfig.waveScale = viewMode == .side ? 1.6 : 1     // round 6: 2.2 pushed the feet out of reach
+        if viewMode == .side, naturalWalk {
+            // Profile walk, round 2: a prowl, not a march. Feet lift only a little more
+            // than before but reach further, in fewer, slower, sweeping steps.
+            wantedConfig.liftHeight *= 1.4
+            wantedConfig.stepDuration = 0.32          // round 11: was 0.42
+            // (Round 7's shorter side-view steps removed in round 10: the reach check now
+            // keeps planted feet within reach.)
+        }
         var gait = (self.gait?.config == wantedConfig ? self.gait : nil)
             ?? LizardGait(simulation: sim, config: wantedConfig)
         gait.update(with: sim, deltaTime: deltaTime)
@@ -167,11 +201,19 @@ final class LizardAnimator: NSObject {
     private func place(_ sim: WanderSimulation, force: Bool = false) {
         let placeStart = CACurrentMediaTime()
         let center = sim.spine[sim.spine.count / 2]
-        var pose = LizardPose(sim, gait: gait, relativeTo: center)
+        // Side view: measure depth from the lane line, so a lizard that has strayed off the lane
+        // during a turn is drawn further back (higher) rather than the whole view drifting.
+        let origin = viewMode == .side && naturalWalk ? CGPoint(x: center.x, y: sim.laneY ?? center.y) : center
+        var pose = LizardPose(sim, gait: gait, relativeTo: origin)
         pose.view = viewMode
         pose.lookAtViewer = headLook.amount
         pose.glance = headLook.glance
         pose.tongueShape = tongue.shape
+        pose.naturalWalk = naturalWalk
+        if let gait {
+            pose.liftHeight = gait.config.liftHeight
+            pose.walkAmount = min(gait.tailAmplitude / max(gait.config.tailWaveAmplitude, 0.01), 1)
+        }
         let breathStrength = BreathingPreset.current.multiplier
         pose.breath = breathing.chest * breathStrength
         pose.throat = breathing.throat * breathStrength
@@ -184,7 +226,7 @@ final class LizardAnimator: NSObject {
             pose.tongue = nil
         }
         let pointer = pointerLocation()
-        pose.pointer = pointer.map { CGPoint(x: $0.x - center.x, y: $0.y - center.y) }
+        pose.pointer = pointer.map { CGPoint(x: $0.x - origin.x, y: $0.y - origin.y) }
 
         // While looking at the pointer, redraw when the pointer moves.
         let pointerMoved: Bool = {

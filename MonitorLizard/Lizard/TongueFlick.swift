@@ -24,7 +24,7 @@ nonisolated struct TongueFlick {
         var walkingInterval = 2.5...6.0    // and while walking
         var reachRange: ClosedRange<CGFloat> = 0.55...1.0   // fraction of full length
         var sideBend: ClosedRange<CGFloat> = -0.7...0.7     // radians along the whole tongue
-        var upBend: ClosedRange<CGFloat> = -0.3...0.5
+        var upBend: ClosedRange<CGFloat> = -0.8 ... -0.15   // round 5: curves down, toward the ground
         var waveFrequency = 2.5            // waves per second while out
     }
 

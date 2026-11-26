@@ -29,6 +29,11 @@ final class LizardTongue {
     private var joints: [Entity] = []       // each one a child of the one before
     private var rods: [Entity] = []         // scaled along X to the segment length
     private let fork = Entity()
+    /// Round 5: the tongue leaves the mouth angled ~20° down (like a real monitor's,
+    /// reaching for the ground ahead) and splays its fork wider.
+    private let aim = Entity()
+    private let downAngle: Float = 0.35
+    private let forkSpread: Float = 0.34
     private let prongs: [Entity]
 
     init(length: Float) {
@@ -45,7 +50,9 @@ final class LizardTongue {
         let rodMesh = MeshResource.generateCylinder(height: 1, radius: radius)
         let ballMesh = MeshResource.generateSphere(radius: radius)
 
-        var parent = root
+        aim.orientation = simd_quatf(angle: downAngle, axis: [0, 1, 0])     // tips +X downward
+        root.addChild(aim)
+        var parent = aim
         for index in 0..<segmentCount {
             let joint = Entity()
             if index > 0 {   // rounds off each bend (none at the mouth, where it would show early)
@@ -108,12 +115,12 @@ final class LizardTongue {
 
         fork.position = [segment, 0, 0]
         fork.scale = SIMD3(repeating: max(e * reach, 0.05))
-        // Prongs spread about 13° each side (longer fork, round 3), scissoring and flicking up and down with the wave.
+        // Prongs splay about 20° each side (round 5), scissoring and flicking up and down with the wave.
         let scissor = 0.12 * wave * sin(phase * 2)
         let flick = 0.25 * wave * sin(phase * 2 + 1)
-        prongs[0].orientation = simd_quatf(angle: 0.22 + scissor, axis: [0, 0, 1])
+        prongs[0].orientation = simd_quatf(angle: forkSpread + scissor, axis: [0, 0, 1])
             * simd_quatf(angle: -flick, axis: [0, 1, 0])
-        prongs[1].orientation = simd_quatf(angle: -0.22 + scissor, axis: [0, 0, 1])
+        prongs[1].orientation = simd_quatf(angle: -forkSpread + scissor, axis: [0, 0, 1])
             * simd_quatf(angle: flick, axis: [0, 1, 0])
     }
 }

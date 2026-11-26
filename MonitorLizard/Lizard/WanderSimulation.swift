@@ -36,7 +36,10 @@ nonisolated struct WanderSimulation {
     nonisolated static let longRestsKey = "lizardLongRests"
 
     struct Config {
-        var walkSpeed: CGFloat = 35              // points per second (a slow, deliberate walk)
+        /// Natural walk: the most each spine joint may bend (radians). The body can't fold
+        /// into a hairpin, so in a tight turn the hips swing and the tail sweeps round. nil = no limit.
+        var maxBend: CGFloat? = nil
+        var walkSpeed: CGFloat = 22              // points per second (slowed from 35 on 2026-11-23: a prowl)
         var maxTurnRate: CGFloat = 1.4           // radians per second
         var segmentCount = 16                    // spine points, head first
         var segmentSpacing: CGFloat = 8          // points between spine points
@@ -74,6 +77,9 @@ nonisolated struct WanderSimulation {
 
     /// Side view: pick wander targets only to the left or right, so the lizard stays in profile.
     var levelWalking = false
+    /// Side view: the depth line it walks along (set when the side view starts). After a turn
+    /// it steers back onto this line instead of staying at the new depth (which reads as floating).
+    var laneY: CGFloat?
     /// Areas wander targets should avoid (e.g. windows, so it doesn't head behind them).
     var obstacles: [CGRect] = []
 
@@ -162,8 +168,23 @@ nonisolated struct WanderSimulation {
             let dy = spine[i].y - spine[i - 1].y
             let length = hypot(dx, dy)
             guard length > 0 else { continue }
-            let scale = config.segmentSpacing / length
-            spine[i] = CGPoint(x: spine[i - 1].x + dx * scale, y: spine[i - 1].y + dy * scale)
+            var ux = dx / length, uy = dy / length
+            if let maxBend = config.maxBend, i >= 2 {
+                // Direction the body runs back from the previous joint; keep this joint within
+                // maxBend of it.
+                let px = spine[i - 1].x - spine[i - 2].x, py = spine[i - 1].y - spine[i - 2].y
+                let pl = hypot(px, py)
+                if pl > 0 {
+                    let back = atan2(py, px)
+                    let bend = Self.normalizedAngle(atan2(uy, ux) - back)
+                    if abs(bend) > maxBend {
+                        let limited = back + (bend > 0 ? maxBend : -maxBend)
+                        ux = cos(limited); uy = sin(limited)
+                    }
+                }
+            }
+            spine[i] = CGPoint(x: spine[i - 1].x + ux * config.segmentSpacing,
+                               y: spine[i - 1].y + uy * config.segmentSpacing)
         }
     }
 
@@ -180,7 +201,7 @@ nonisolated struct WanderSimulation {
         for _ in 0..<10 {
             candidate = CGPoint(x: CGFloat.random(in: area.minX...area.maxX, using: &rng),
                                 y: CGFloat.random(in: area.minY...area.maxY, using: &rng))
-            if levelWalking { candidate.y = min(max(head.y, area.minY), area.maxY) }
+            if levelWalking { candidate.y = min(max(laneY ?? head.y, area.minY), area.maxY) }
             if !obstacles.contains(where: { $0.insetBy(dx: -30, dy: -30).contains(candidate) }) { break }
         }
         return candidate

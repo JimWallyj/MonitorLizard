@@ -59,3 +59,22 @@ struct WanderSimulationTests {
         #expect(abs(WanderSimulation.normalizedAngle(2 * .pi + 0.25) - 0.25) < 1e-9)
     }
 }
+
+struct SpineBendTests {
+    /// With a bend limit, no joint folds sharper than the limit, even in tight turns.
+    @Test func spineNeverFoldsBeyondLimit() {
+        let bounds = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        var sim = WanderSimulation(start: CGPoint(x: 720, y: 450), heading: 0, bounds: bounds, seed: 11)
+        sim.config.maxBend = 0.3
+        sim.config.maxTurnRate = 3.2
+        for _ in 0..<600 {
+            sim.step(by: 0.05, in: bounds)
+            let s = sim.spine
+            for i in 2..<s.count {
+                let a = atan2(s[i - 1].y - s[i - 2].y, s[i - 1].x - s[i - 2].x)
+                let b = atan2(s[i].y - s[i - 1].y, s[i].x - s[i - 1].x)
+                #expect(abs(WanderSimulation.normalizedAngle(b - a)) <= 0.3 + 0.001)
+            }
+        }
+    }
+}

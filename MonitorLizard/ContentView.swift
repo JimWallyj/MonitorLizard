@@ -19,6 +19,8 @@ struct ContentView: View {
     @AppStorage(ShadowPreset.storageKey) private var shadowRaw = ShadowPreset.darker.rawValue
     @AppStorage(BreathingPreset.storageKey) private var breathingRaw = BreathingPreset.normal.rawValue
     @AppStorage(WanderSimulation.longRestsKey) private var longRests = false
+    @AppStorage(LizardAnimator.naturalWalkKey) private var naturalWalk = true
+    @AppStorage(LizardAnimator.halfSpeedKey) private var halfSpeed = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -88,6 +90,8 @@ struct ContentView: View {
             .pickerStyle(.menu)
 
             Toggle("Long rests (test)", isOn: $longRests)
+            Toggle("Natural walk (test)", isOn: $naturalWalk)
+            Toggle("Half speed (test)", isOn: $halfSpeed)
 
             Picker("Breathing (test)", selection: $breathingRaw) {
                 ForEach(BreathingPreset.allCases) { preset in

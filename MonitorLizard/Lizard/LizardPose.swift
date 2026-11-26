@@ -49,6 +49,14 @@ nonisolated struct LizardPose {
     var breath: CGFloat = 0
     var throat: CGFloat = 0
 
+    // Phase 3 step 1 (real model, side view): the profile walk.
+    /// Use the natural side-view walk (test switch).
+    var naturalWalk = true
+    /// 0 = standing, 1 = walking (eases in and out with the stride).
+    var walkAmount: CGFloat = 0
+    /// The gait's foot lift at mid-step, points (to tell how far through a step each foot is).
+    var liftHeight: CGFloat = 3
+
     /// - Parameter gait: planted feet and tail wave (step 3). Without it, the
     ///   legs swing in place as in the 2D drawing.
     init(_ sim: WanderSimulation, gait: LizardGait? = nil, relativeTo origin: CGPoint) {
@@ -64,8 +72,20 @@ nonisolated struct LizardPose {
                 guard t > 0.45 else { continue }
                 let u = (t - 0.45) / 0.55                       // 0 at the tail base, 1 at the tip
                 let f = R.forward(at: i, in: s)
-                let sway = gait.tailAmplitude * u * sin(gait.tailPhase - u * 2.5)
+                let waveShare: CGFloat = gait.config.naturalSwing ? 0.4 : 1   // natural walk: the hips drive most of it
+                let sway = waveShare * gait.tailAmplitude * u * sin(gait.tailPhase - u * 2.5)
                 body[i].center = R.offset(s[i], by: CGVector(dx: -f.dy, dy: f.dx), sway)
+            }
+        }
+        // Phase 3 natural walk, round 3: a travelling wave. Each front step swings the shoulders
+        // to one side; the same swing then runs back down the body, reaching the hips about
+        // 0.3 s later and the tail tip about 1 s later, growing along the tail like a whip.
+        if let gait, gait.config.naturalSwing, n > 3 {
+            for i in s.indices {
+                let w = gait.waveOffset(at: i, of: n)
+                guard w != 0 else { continue }
+                let f = R.forward(at: i, in: s)
+                body[i].center = R.offset(body[i].center, by: CGVector(dx: -f.dy, dy: f.dx), w)
             }
         }
         self.body = body

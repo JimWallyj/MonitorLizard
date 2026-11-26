@@ -93,3 +93,27 @@ struct LizardGaitTests {
         #expect(abs(gait.feet[0].position.x - sim.spine[4].x) < 0.001)
     }
 }
+
+struct BodyWaveTests {
+    /// The body wave must swing both ways while walking (left and right), so the
+    /// tail whips to both sides.
+    @Test func bodyWaveSwingsBothWays() {
+        let bounds = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let dt = 1.0 / 20.0
+        var sim = WanderSimulation(start: CGPoint(x: 720, y: 450), heading: 0, bounds: bounds, seed: 4)
+        var config = LizardGait.Config()
+        config.naturalSwing = true
+        var gait = LizardGait(simulation: sim, config: config)
+        var most: CGFloat = 0, least: CGFloat = 0
+        var delayedMost: CGFloat = 0, delayedLeast: CGFloat = 0
+        for _ in 0..<Int(20 / dt) {
+            sim.step(by: dt, in: bounds)
+            gait.update(with: sim, deltaTime: dt)
+            most = max(most, gait.girdleSwing); least = min(least, gait.girdleSwing)
+            let tail = gait.girdleSwing(delay: 0.8)
+            delayedMost = max(delayedMost, tail); delayedLeast = min(delayedLeast, tail)
+        }
+        #expect(most > 0.4 && least < -0.4)
+        #expect(delayedMost > 0.4 && delayedLeast < -0.4)
+    }
+}
