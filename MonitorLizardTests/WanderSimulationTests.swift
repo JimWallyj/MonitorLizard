@@ -78,3 +78,21 @@ struct SpineBendTests {
         }
     }
 }
+
+struct LedgeDepthTests {
+    /// In side view the head never strays in front of the ledge's edge, or far behind it.
+    @Test func headStaysOnTheLedgeDepth() {
+        let bounds = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        var sim = WanderSimulation(start: CGPoint(x: 720, y: 450), heading: 0, bounds: bounds, seed: 5)
+        sim.levelWalking = true
+        sim.laneY = 450
+        sim.walkRangeX = 500...900
+        sim.config.maxTurnRate = 3.2
+        sim.config.maxBend = 0.3
+        for _ in 0..<1200 {
+            sim.step(by: 0.05, in: bounds)
+            #expect(sim.head.y >= 450 - sim.config.ledgeDepth - 0.001 && sim.head.y <= 453.001)
+            #expect(sim.head.x >= 488 - 0.001 && sim.head.x <= 912.001)
+        }
+    }
+}

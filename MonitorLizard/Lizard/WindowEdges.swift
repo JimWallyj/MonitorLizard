@@ -44,6 +44,18 @@ enum WindowScanner {
     }
 }
 
+extension WindowScanner {
+    /// One window's current frame (cheap: asks about that window only). nil if it's gone or hidden.
+    static func frame(ofWindow id: Int) -> CGRect? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(id)) as? [[String: Any]],
+              let info = list.first,
+              (info[kCGWindowIsOnscreen as String] as? Bool) ?? true,
+              let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+              let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
+        return frame
+    }
+}
+
 nonisolated struct EdgePlanner {
     /// Distance from the window edge to the lizard's centreline. About the
     /// width of its legs, so the near feet sit right at the edge.

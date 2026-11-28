@@ -73,6 +73,15 @@ nonisolated struct LizardGait {
     private(set) var feet: [Foot]
     private(set) var tailPhase: CGFloat = 0
     private(set) var tailAmplitude: CGFloat = 0
+    /// Moves every foot sideways with the lizard (its ledge's window moved).
+    mutating func shift(by dx: CGFloat) {
+        guard dx != 0 else { return }
+        for i in feet.indices {
+            feet[i].position.x += dx
+            feet[i].stepFrom.x += dx
+        }
+    }
+
     /// Phase 3: the body wave's driver, −1…1. Round 3: set by the FRONT legs: each front step
     /// swings the shoulders toward that side (+1 = right), and the wave then travels from the
     /// shoulders down the body to the hips and tail (see `girdleSwing(delay:)`).

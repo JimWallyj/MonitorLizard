@@ -56,6 +56,8 @@ nonisolated struct LizardPose {
     var walkAmount: CGFloat = 0
     /// The gait's foot lift at mid-step, points (to tell how far through a step each foot is).
     var liftHeight: CGFloat = 3
+    /// Side view (Phase 3 step 2): the ledge's stretch, in the same coordinates as the body.
+    var ledgeRange: ClosedRange<CGFloat>?
 
     /// - Parameter gait: planted feet and tail wave (step 3). Without it, the
     ///   legs swing in place as in the 2D drawing.

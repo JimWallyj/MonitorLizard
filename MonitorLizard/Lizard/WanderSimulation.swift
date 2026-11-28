@@ -39,6 +39,8 @@ nonisolated struct WanderSimulation {
         /// Natural walk: the most each spine joint may bend (radians). The body can't fold
         /// into a hairpin, so in a tight turn the hips swing and the tail sweeps round. nil = no limit.
         var maxBend: CGFloat? = nil
+        /// Side view: how far back from a ledge's front edge the head may go (points of depth).
+        var ledgeDepth: CGFloat = 24
         var walkSpeed: CGFloat = 22              // points per second (slowed from 35 on 2026-11-23: a prowl)
         var maxTurnRate: CGFloat = 1.4           // radians per second
         var segmentCount = 16                    // spine points, head first
@@ -80,6 +82,22 @@ nonisolated struct WanderSimulation {
     /// Side view: the depth line it walks along (set when the side view starts). After a turn
     /// it steers back onto this line instead of staying at the new depth (which reads as floating).
     var laneY: CGFloat?
+    /// Side view (Phase 3 step 2): the stretch of ledge the head may head for. nil = anywhere.
+    var walkRangeX: ClosedRange<CGFloat>? {
+        didSet {
+            // Round 2: a target picked before the ledge got shorter (a window moved over it)
+            // must be brought back onto the ledge, or the lizard walks off the end behind the window.
+            if let r = walkRangeX, levelWalking { target.x = min(max(target.x, r.lowerBound), r.upperBound) }
+        }
+    }
+
+    /// Moves the whole lizard sideways (it rides along when its ledge's window moves).
+    mutating func shift(by dx: CGFloat) {
+        guard dx != 0 else { return }
+        spine = spine.map { CGPoint(x: $0.x + dx, y: $0.y) }
+        target.x += dx
+        waypoints = waypoints.map { CGPoint(x: $0.x + dx, y: $0.y) }
+    }
     /// Areas wander targets should avoid (e.g. windows, so it doesn't head behind them).
     var obstacles: [CGRect] = []
 
@@ -159,6 +177,17 @@ nonisolated struct WanderSimulation {
             x: min(max(head.x + cos(direction) * distanceMoved, bounds.minX), bounds.maxX),
             y: min(max(head.y + sin(direction) * distanceMoved, bounds.minY), bounds.maxY))
         spine[0] = newHead
+        if levelWalking, let r = walkRangeX {
+            // Never walk more than a few points past the ends of the walking stretch.
+            spine[0].x = min(max(spine[0].x, r.lowerBound - 12), r.upperBound + 12)
+        }
+        if levelWalking, let lane = laneY {
+            // Round 3: a ledge has almost no depth. The head may go a little way back from the
+            // front edge (for turning round) but never in front of it: smaller y is further back
+            // (drawn higher in the tilted side view), larger y is nearer the viewer (drawn lower,
+            // which took the lizard down behind the Dock and off the screen).
+            spine[0].y = min(max(spine[0].y, lane - config.ledgeDepth), lane + 3)
+        }
         stridePhase = (stridePhase + distanceMoved / config.strideLength * 2 * .pi)
             .truncatingRemainder(dividingBy: 2 * .pi)
 
@@ -201,7 +230,13 @@ nonisolated struct WanderSimulation {
         for _ in 0..<10 {
             candidate = CGPoint(x: CGFloat.random(in: area.minX...area.maxX, using: &rng),
                                 y: CGFloat.random(in: area.minY...area.maxY, using: &rng))
-            if levelWalking { candidate.y = min(max(laneY ?? head.y, area.minY), area.maxY) }
+            if levelWalking {
+                candidate.y = min(max(laneY ?? head.y, area.minY), area.maxY)
+                if let range = walkRangeX {
+                    candidate.x = range.upperBound > range.lowerBound
+                        ? CGFloat.random(in: range, using: &rng) : range.lowerBound
+                }
+            }
             if !obstacles.contains(where: { $0.insetBy(dx: -30, dy: -30).contains(candidate) }) { break }
         }
         return candidate

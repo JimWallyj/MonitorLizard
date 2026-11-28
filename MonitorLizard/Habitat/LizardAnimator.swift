@@ -28,6 +28,13 @@ final class LizardAnimator: NSObject {
     private var gait: LizardGait?
     private var headLook = HeadLook()
     private var tongue = TongueFlick()
+    // Phase 3 step 2: the ledge the lizard walks along in side view.
+    private var currentLedge: Ledge?
+    private var currentLedgeWindowX: CGFloat?
+    private var lastLedgeScan: CFTimeInterval = 0
+    private var currentLedgeY: CGFloat?
+    private var lastWindowMove: CFTimeInterval = -10
+    private var movedThisTick = false
     /// Test switch (Phase 3): the natural side-view walk, read from UserDefaults.
     private var naturalWalk: Bool {
         UserDefaults.standard.object(forKey: Self.naturalWalkKey) as? Bool ?? true
@@ -157,6 +164,17 @@ final class LizardAnimator: NSObject {
         // Natural walk: the body wave does the undulating, so the path's own sashay is reduced.
         sim.config.swayAmount = naturalWalk ? 0.12 : WanderSimulation.Config().swayAmount
         sim.config.maxBend = naturalWalk ? 0.3 : nil        // ~17° per joint: no hairpin folds
+        movedThisTick = false
+        if viewMode == .side {
+            followLedgeWindow(&sim, now: now)
+            updateLedge(&sim, now: now, bounds: bounds)
+        } else if currentLedge != nil || sim.walkRangeX != nil {
+            currentLedge = nil
+            currentLedgeWindowX = nil
+            currentLedgeY = nil
+            lastLedgeScan = 0
+            sim.walkRangeX = nil
+        }
         sim.step(by: walkDelta, in: bounds)
         if followEdges && viewMode != .side {
             updateEdgeRoute(&sim, now: now, bounds: bounds)
@@ -199,9 +217,11 @@ final class LizardAnimator: NSObject {
         breathing.update(isResting: !sim.isWalking, deltaTime: deltaTime)
         FrameTimings.add("simulation", CACurrentMediaTime() - tickStart)
 
-        place(sim)
+        place(sim, force: movedThisTick)
         // Full rate while walking or while the tongue is flicking (it's quick).
-        setFrameRate(sim.isWalking || tongue.isActive ? preset.walkingFrameRate : Self.restingFrameRate)
+        // Full rate while walking, flicking the tongue, or riding a window that's being moved.
+        let busy = sim.isWalking || tongue.isActive || now - lastWindowMove < 0.5
+        setFrameRate(busy ? preset.walkingFrameRate : Self.restingFrameRate)
     }
 
     private func place(_ sim: WanderSimulation, force: Bool = false) {
@@ -214,6 +234,9 @@ final class LizardAnimator: NSObject {
         pose.view = viewMode
         pose.lookAtViewer = headLook.amount
         pose.glance = headLook.glance
+        if viewMode == .side, let r = currentLedge?.xRange {
+            pose.ledgeRange = (r.lowerBound - origin.x)...(r.upperBound - origin.x)
+        }
         pose.tongueShape = tongue.shape
         pose.naturalWalk = naturalWalk
         if let gait {
@@ -258,14 +281,99 @@ final class LizardAnimator: NSObject {
         lastRestingTongueOut = sim.isWalking ? nil : tongueOut
         lastDrawnPointer = pointer
 
-        // Side view: stay on a level "ledge" line (Phase 3 will use real ledges);
-        // the wander's up/down movement becomes depth instead of floating.
+        // Side view: feet on the ledge line (Phase 3 step 2); the wander's up/down movement
+        // is depth, not height.
         let half = Lizard3DModel.viewSize / 2
-        let viewY = viewMode == .side ? container.bounds.height * 0.75 : center.y
+        let viewY = viewMode == .side ? (currentLedge?.y ?? container.bounds.height * 0.75) : center.y
         renderer.view.setFrameOrigin(CGPoint(x: center.x - half, y: viewY - half))
         FrameTimings.add("pose", CACurrentMediaTime() - placeStart)
         renderer.apply(pose, simulation: sim)
         drawsSinceReport += 1
+    }
+
+    /// Side view: twice a second, find the ledges (window tops and the screen bottom / Dock top)
+    /// and keep the lizard on one. It rides along when its window moves and goes to the nearest
+    /// other ledge when its ledge goes away (for now it simply appears there; Phase 3 step 3
+    /// adds climbing between surfaces).
+    private func updateLedge(_ sim: inout WanderSimulation, now: CFTimeInterval, bounds: CGRect) {
+        guard now - lastLedgeScan >= 0.5 else { return }
+        lastLedgeScan = now
+        let windows = WindowScanner.normalWindows().filter { $0.frame.intersects(bounds) }
+        let ledges = LedgeFinder.ledges(windows: windows, bottomY: dockTop(in: bounds), bounds: bounds)
+        let center = sim.spine[sim.spine.count / 2]
+
+        if let current = currentLedge {
+            // Same window (or the screen bottom), still under the lizard?
+            let windowX = current.windowID.flatMap { id in windows.first { $0.id == id }?.frame.minX }
+            let dx = (windowX ?? 0) - (currentLedgeWindowX ?? windowX ?? 0)
+            // Round 2: a little slack, so being near an end doesn't count as falling off.
+            let match = ledges.filter { $0.windowID == current.windowID }
+                .min { distanceOutside(center.x + dx, $0.xRange) < distanceOutside(center.x + dx, $1.xRange) }
+                .flatMap { distanceOutside(center.x + dx, $0.xRange) < 80 ? $0 : nil }
+            if let match {
+                if dx != 0 {                        // the window moved sideways: ride along
+                    sim.shift(by: dx)
+                    gait?.shift(by: dx)
+                }
+                currentLedge = match
+                currentLedgeWindowX = windowX
+            } else {
+                currentLedge = nil
+            }
+        }
+
+        if currentLedge == nil {
+            let fromY = currentLedgeY ?? bounds.maxY
+            guard let ledge = LedgeFinder.nearest(to: CGPoint(x: center.x, y: fromY), in: ledges) else { return }
+            // Put the lizard on it (centred if it's off the end).
+            let inset = min(80, ledge.length / 2)
+            let x = min(max(center.x, ledge.xRange.lowerBound + inset), ledge.xRange.upperBound - inset)
+            if x != center.x {
+                sim.shift(by: x - center.x)
+                gait = nil                          // feet are rebuilt under the body
+            }
+            currentLedge = ledge
+            currentLedgeWindowX = ledge.windowID.flatMap { id in windows.first { $0.id == id }?.frame.minX }
+            print("Monitor Lizard: on ledge at y \(Int(ledge.y)) (\(ledge.windowID == nil ? "screen bottom" : "window top"), "
+                  + "\(Int(ledge.length)) pt long); \(ledges.count) ledges found")
+        }
+        currentLedgeY = currentLedge?.y
+        if let ledge = currentLedge {
+            // Head targets stay well inside the ledge, so the turn-arounds happen on it.
+            // (Round 2: 70 pt, so the whole turn-around happens on the ledge.)
+            let inset = min(70, ledge.length / 3)
+            sim.walkRangeX = (ledge.xRange.lowerBound + inset)...(ledge.xRange.upperBound - inset)
+        }
+    }
+
+    /// Every frame on a window's ledge: follow that window directly (a cheap single-window
+    /// query), so the lizard stays attached while you drag the window.
+    private func followLedgeWindow(_ sim: inout WanderSimulation, now: CFTimeInterval) {
+        guard let ledge = currentLedge, let id = ledge.windowID, let oldX = currentLedgeWindowX,
+              let frame = WindowScanner.frame(ofWindow: id) else { return }
+        let dx = frame.minX - oldX
+        guard dx != 0 || frame.minY != ledge.y else { return }
+        sim.shift(by: dx)
+        gait?.shift(by: dx)
+        currentLedge = Ledge(y: frame.minY,
+                             xRange: (ledge.xRange.lowerBound + dx)...(ledge.xRange.upperBound + dx),
+                             windowID: id)
+        currentLedgeWindowX = frame.minX
+        currentLedgeY = frame.minY
+        if let r = sim.walkRangeX { sim.walkRangeX = (r.lowerBound + dx)...(r.upperBound + dx) }
+        lastWindowMove = now
+        movedThisTick = true
+    }
+
+    private func distanceOutside(_ x: CGFloat, _ range: ClosedRange<CGFloat>) -> CGFloat {
+        max(range.lowerBound - x, 0) + max(x - range.upperBound, 0)
+    }
+
+    /// The screen bottom, or the top of the Dock when it's at the bottom (habitat coordinates).
+    private func dockTop(in bounds: CGRect) -> CGFloat {
+        guard let screen = container.window?.screen ?? NSScreen.screens.first else { return bounds.maxY - 2 }
+        let dockHeight = max(screen.visibleFrame.minY - screen.frame.minY, 0)
+        return bounds.maxY - dockHeight - 2
     }
 
     /// Twice a second: check the windows, drop a route whose window moved or closed,
