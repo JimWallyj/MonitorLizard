@@ -119,14 +119,14 @@ final class ContactShadow {
             return
         }
         layer.isHidden = false
-        if pose.view == .side {
+        if pose.view == .side && pose.sideBlend > 0.5 {
             updateOnLedge(pose, strength: strength, liftHeight: liftHeight)
             return
         }
         let belly = pose.view == .belly
         // Phase 3 step 2: side view: the shadow lies on the ledge, seen at a shallow angle,
         // so it's squashed flat (by the tilt: sin 20° ≈ 0.34; a thin strip in straight profile).
-        let side = pose.view == .side
+        let side = pose.view == .side && pose.sideBlend > 0.5
         let squash: CGFloat = side ? (pose.naturalWalk ? 0.34 : 0.12) : 1
 
         // Pose points are y-down, measured from the view's centre; layers here are y-up.

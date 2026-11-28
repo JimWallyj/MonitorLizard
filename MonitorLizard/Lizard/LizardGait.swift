@@ -67,7 +67,17 @@ nonisolated struct LizardGait {
         let isFront: Bool
     }
 
-    let config: Config
+    private(set) var config: Config
+
+    /// Changes the gait's settings without resetting the feet (Phase 3 step 3: the side view's
+    /// settings switch in mid-walk during a transition). Returns false if the legs hang from
+    /// different spine points, which needs a new gait.
+    mutating func retune(_ newConfig: Config) -> Bool {
+        guard newConfig.frontSpineIndex == config.frontSpineIndex,
+              newConfig.backSpineIndex == config.backSpineIndex else { return false }
+        config = newConfig
+        return true
+    }
     /// Front-left, front-right, back-left, back-right.
     let layout: [LegLayout]
     private(set) var feet: [Foot]

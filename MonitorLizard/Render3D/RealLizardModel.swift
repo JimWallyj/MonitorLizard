@@ -515,7 +515,9 @@ final class RealLizardRig {
             // Natural walk: tilted 20° so the back shows a little, as in a real three-quarter
             // view; that lets the side-to-side bend and the turns read. Otherwise straight profile.
             let tilt: Float = pose.naturalWalk ? 0.35 : 0
-            viewRotation = simd_float3x3(simd_quatf(angle: -.pi / 2 + tilt, axis: [1, 0, 0]))
+            // Phase 3 step 3: during a wallpaper ↔ ledge transition the view rolls part way.
+            let blend = Float(min(max(pose.sideBlend, 0), 1))
+            viewRotation = simd_float3x3(simd_quatf(angle: (-.pi / 2 + tilt) * blend, axis: [1, 0, 0]))
         }
 
         // 1. Body path in body-frame points (y up): snout tip, then the body centres.
@@ -559,7 +561,8 @@ final class RealLizardRig {
         // Round 2 (prowl): the body sinks ~1.2 pt lower while walking (elbows and knees
         // bend more) and only glides up a little with each step.
         let bodyRise: Float = sideWalk
-            ? 0.35 * max(swing.a, swing.b) - 1.2 * Float(pose.walkAmount) : 0    // points
+            ? (0.35 * max(swing.a, swing.b) - 1.2 * Float(pose.walkAmount)) * Float(min(max(pose.sideBlend, 0), 1))
+            : 0    // points
         let carrierPosition = SIMD3<Float>(pelvisScene.x - offset.x, pelvisScene.y - offset.y,
                                            -scale * (floorUp + crouch) + bodyRise * Lizard3DModel.metersPerPoint)
         let bodyMatrix = Transform(scale: SIMD3(repeating: scale),

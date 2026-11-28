@@ -58,6 +58,9 @@ nonisolated struct LizardPose {
     var liftHeight: CGFloat = 3
     /// Side view (Phase 3 step 2): the ledge's stretch, in the same coordinates as the body.
     var ledgeRange: ClosedRange<CGFloat>?
+    /// Side view: how far the view has rolled from looking down on the back (0) to the tilted
+    /// side view (1). In between during a wallpaper ↔ ledge transition (Phase 3 step 3).
+    var sideBlend: CGFloat = 1
 
     /// - Parameter gait: planted feet and tail wave (step 3). Without it, the
     ///   legs swing in place as in the 2D drawing.
